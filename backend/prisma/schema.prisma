@@ -1,0 +1,306 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+enum InviteStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+  EXPIRED
+}
+
+enum FileType {
+  DOC_CANVAS
+  TEMPLATE
+}
+
+enum FileVisibility {
+  PRIVATE
+  WORKSPACE
+  PUBLIC
+}
+
+enum ShareRole {
+  VIEWER
+  COMMENTER
+  EDITOR
+}
+
+enum CommentStatus {
+  OPEN
+  RESOLVED
+}
+
+enum DiagramType {
+  FLOWCHART
+  SEQUENCE
+  ERD
+  ARCHITECTURE
+  SYSTEM
+  UNKNOWN
+}
+
+enum ApiKeyStatus {
+  ACTIVE
+  REVOKED
+}
+
+enum UsageMetric {
+  AI_CREDIT
+  API_CALL
+  EXPORT
+  STORAGE_BYTE
+}
+
+model User {
+  id             String            @id @default(cuid())
+  email          String            @unique
+  name           String?
+  avatarUrl      String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  sessions       Session[]
+  memberships    WorkspaceMember[]
+  invitesSent    WorkspaceInvite[] @relation("InviteCreatedBy")
+  filesCreated   File[]            @relation("FileCreatedBy")
+  versions       FileVersion[]
+  diagrams       Diagram[]
+  comments       Comment[]
+  apiKeysCreated ApiKey[]          @relation("ApiKeyCreatedBy")
+  auditEvents    AuditEvent[]      @relation("AuditActor")
+}
+
+model Session {
+  id           String    @id @default(cuid())
+  userId       String
+  tokenHash    String    @unique
+  userAgent    String?
+  ipAddress    String?
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Workspace {
+  id          String            @id @default(cuid())
+  name        String
+  slug        String            @unique
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  members     WorkspaceMember[]
+  invites     WorkspaceInvite[]
+  folders     Folder[]
+  files       File[]
+  apiKeys     ApiKey[]
+  usageMeters UsageMeter[]
+  auditEvents AuditEvent[]
+}
+
+model WorkspaceMember {
+  id          String        @id @default(cuid())
+  workspaceId String
+  userId      String
+  role        WorkspaceRole @default(MEMBER)
+  joinedAt    DateTime      @default(now())
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+}
+
+model WorkspaceInvite {
+  id             String       @id @default(cuid())
+  workspaceId    String
+  email          String
+  role           WorkspaceRole @default(MEMBER)
+  status         InviteStatus  @default(PENDING)
+  token          String        @unique
+  expiresAt      DateTime
+  createdById    String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  workspace      Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdBy      User?         @relation("InviteCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, email])
+  @@index([status, expiresAt])
+}
+
+model Folder {
+  id          String    @id @default(cuid())
+  workspaceId String
+  parentId    String?
+  name        String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  parent      Folder?   @relation("FolderTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children    Folder[]  @relation("FolderTree")
+  files       File[]
+
+  @@index([workspaceId, parentId])
+}
+
+model File {
+  id                String            @id @default(cuid())
+  workspaceId       String
+  folderId          String?
+  title             String
+  type              FileType          @default(DOC_CANVAS)
+  visibility        FileVisibility    @default(PRIVATE)
+  createdById       String?
+  contentVersion    Int               @default(1)
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  deletedAt         DateTime?
+  workspace         Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  folder            Folder?           @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  createdBy         User?             @relation("FileCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  versions          FileVersion[]
+  diagrams          Diagram[]
+  comments          Comment[]
+  shareLinks        ShareLink[]
+
+  @@index([workspaceId, updatedAt])
+  @@index([folderId])
+  @@index([createdById])
+}
+
+model FileVersion {
+  id            String   @id @default(cuid())
+  fileId        String
+  versionNumber Int
+  document      Json?
+  canvas        Json?
+  message       String?
+  createdById   String?
+  createdAt     DateTime @default(now())
+  file          File     @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  createdBy     User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([fileId, versionNumber])
+  @@index([createdById])
+}
+
+model Diagram {
+  id        String      @id @default(cuid())
+  fileId    String
+  type      DiagramType @default(UNKNOWN)
+  title     String?
+  sourceDsl String?
+  ast       Json?
+  layout    Json?
+  createdById String?
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  file      File        @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  createdBy User?       @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([fileId, type])
+  @@index([createdById])
+}
+
+model Comment {
+  id        String        @id @default(cuid())
+  fileId    String
+  authorId  String?
+  parentId  String?
+  body      String
+  anchor    Json?
+  status    CommentStatus @default(OPEN)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  resolvedAt DateTime?
+  file      File          @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  author    User?         @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  parent    Comment?      @relation("CommentThread", fields: [parentId], references: [id], onDelete: Cascade)
+  replies   Comment[]     @relation("CommentThread")
+
+  @@index([fileId, status])
+  @@index([authorId])
+}
+
+model ShareLink {
+  id        String    @id @default(cuid())
+  fileId    String
+  token     String    @unique
+  role      ShareRole @default(VIEWER)
+  expiresAt DateTime?
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  file      File      @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  @@index([fileId])
+  @@index([expiresAt])
+}
+
+model ApiKey {
+  id          String       @id @default(cuid())
+  workspaceId String
+  createdById String?
+  name        String
+  keyHash     String       @unique
+  status      ApiKeyStatus @default(ACTIVE)
+  lastUsedAt  DateTime?
+  createdAt   DateTime     @default(now())
+  revokedAt   DateTime?
+  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdBy   User?        @relation("ApiKeyCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, status])
+}
+
+model UsageMeter {
+  id          String      @id @default(cuid())
+  workspaceId String
+  metric      UsageMetric
+  quantity    BigInt      @default(0)
+  periodStart DateTime
+  periodEnd   DateTime
+  metadata    Json?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  workspace   Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, metric, periodStart, periodEnd])
+  @@index([workspaceId, metric])
+}
+
+model AuditEvent {
+  id          String    @id @default(cuid())
+  workspaceId String
+  actorId     String?
+  action      String
+  targetType  String?
+  targetId    String?
+  metadata    Json?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  actor       User?     @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, createdAt])
+  @@index([actorId])
+  @@index([targetType, targetId])
+}

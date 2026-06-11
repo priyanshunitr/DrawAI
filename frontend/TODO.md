@@ -4,16 +4,16 @@ Roadmap for building a legally distinct Eraser-like diagramming and documentatio
 
 ## Phase 1 - Product Shell
 
-- [ ] Choose the frontend stack: Next.js, React, TypeScript, Tailwind CSS, and a component system.
-- [ ] Create the app layout with sidebar navigation, file browser, editor workspace, account menu, and empty states.
+- [x] Choose the frontend stack: Vite, React, TypeScript, plain CSS, and lucide-react icons.
+- [x] Create the app layout with sidebar navigation, file browser, editor workspace, account menu, and empty states.
 - [ ] Add authentication screens: sign in, sign up, forgot password, invite acceptance, and team switcher.
 - [ ] Build the dashboard views: recent files, folders, templates, shared with me, and trash.
-- [ ] Define responsive behavior for desktop, tablet, and mobile read-only sharing views.
+- [x] Define responsive behavior for desktop, tablet, and mobile read-only sharing views.
 
 ## Phase 2 - File Editor MVP
 
 - [ ] Build the main editor route for a single file.
-- [ ] Add a split workspace with document editor, canvas, and optional right inspector panel.
+- [x] Add a split workspace with document editor, canvas, and optional right inspector panel.
 - [ ] Implement autosave indicators, file title editing, breadcrumbs, and file-level actions.
 - [ ] Add keyboard shortcuts for save, undo, redo, search, zoom, duplicate, delete, and command palette.
 - [ ] Build loading, error, offline, and permission-denied states.
@@ -97,4 +97,3 @@ Roadmap for building a legally distinct Eraser-like diagramming and documentatio
 - [ ] Add visual regression tests for canvas, docs, exports, and public viewer.
 - [ ] Add accessibility pass for keyboard navigation, focus states, contrast, and screen reader labels.
 - [ ] Add performance budgets for initial load, editor load, canvas interaction, and large-file rendering.
-

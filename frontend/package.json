@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "test": "node --test src/lib/diagram.test.js src/lib/editor.test.js src/lib/permissions.test.js",
+    "quality": "npm run test && npm run build",
     "preview": "vite preview"
   },
   "dependencies": {

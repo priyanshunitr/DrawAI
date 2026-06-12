@@ -1,0 +1,7 @@
+{
+  "initialLoadMs": 2500,
+  "editorLoadMs": 3200,
+  "canvasFrameMs": 16,
+  "largeFileRenderMs": 900,
+  "maxMainBundleGzipKb": 120
+}

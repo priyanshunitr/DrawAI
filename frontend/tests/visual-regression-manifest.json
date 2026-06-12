@@ -1,0 +1,16 @@
+{
+  "viewports": [
+    { "name": "mobile", "width": 390, "height": 844 },
+    { "name": "tablet", "width": 834, "height": 1112 },
+    { "name": "desktop", "width": 1440, "height": 960 }
+  ],
+  "screens": [
+    "#/dashboard",
+    "#/editor/auth-architecture",
+    "#/share/auth-architecture",
+    "#/integrations",
+    "#/billing",
+    "#/quality",
+    "#/auth/signin"
+  ]
+}

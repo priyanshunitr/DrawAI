@@ -29,13 +29,7 @@ const comments = [
   { author: "Dev", text: "Add webhook branch" }
 ];
 
-function IconButton({
-  label,
-  children
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
+function IconButton({ label, children }) {
   return (
     <button className="icon-button" type="button" aria-label={label} title={label}>
       {children}

@@ -4,7 +4,7 @@ Roadmap for building a legally distinct Eraser-like diagramming and documentatio
 
 ## Phase 1 - Product Shell
 
-- [x] Choose the frontend stack: Vite, React, TypeScript, plain CSS, and lucide-react icons.
+- [x] Choose the frontend stack: Vite, React, JSX, plain CSS, and lucide-react icons.
 - [x] Create the app layout with sidebar navigation, file browser, editor workspace, account menu, and empty states.
 - [ ] Add authentication screens: sign in, sign up, forgot password, invite acceptance, and team switcher.
 - [ ] Build the dashboard views: recent files, folders, templates, shared with me, and trash.

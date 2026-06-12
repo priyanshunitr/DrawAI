@@ -7,6 +7,8 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test src/services/*.test.ts",
+    "quality": "npm run typecheck && npm run test && npm run build",
     "start": "node dist/server.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",

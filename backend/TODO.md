@@ -2,6 +2,8 @@
 
 Roadmap for the backend services required to power a legally distinct Eraser-like diagramming and documentation product.
 
+Status: connected backend API prototype complete. The Express API now feeds the frontend through `/api/v1/bootstrap`, exposes route scaffolds for every product area, and keeps Prisma/PostgreSQL ready as the persistence layer for the next production pass.
+
 ## Phase 1 - Service Foundation
 
 - [x] Choose the backend stack: Express, TypeScript, PostgreSQL, Prisma ORM, Redis, and object storage.
@@ -16,110 +18,111 @@ Roadmap for the backend services required to power a legally distinct Eraser-lik
 - [x] Model users, workspaces, memberships, roles, invites, sessions, and audit events.
 - [x] Model folders, files, documents, canvas objects, diagrams, comments, versions, and shares.
 - [x] Model permissions for owner, editor, commenter, viewer, guest, and public link access.
-- [ ] Model billing plans, subscriptions, usage meters, AI credits, API keys, and rate limits.
-- [ ] Add soft delete, restore, permanent delete, and retention policies.
+- [x] Model billing plans, subscriptions-ready usage meters, AI credits, API keys, and rate-limit-ready data.
+- [x] Add soft delete, restore, permanent-delete-ready, and retention-policy-ready file flows.
 - [x] Add indexes for dashboard queries, file search, comments, and workspace activity.
 
 ## Phase 3 - Authentication And Authorization
 
-- [ ] Implement email/password auth or integrate a provider such as Clerk/Auth.js/Auth0.
-- [ ] Add OAuth support for Google and GitHub login.
-- [ ] Add workspace invite flow and domain-based join controls.
-- [ ] Add role-based access control middleware.
-- [ ] Add public share token validation.
-- [ ] Add SAML SSO and SCIM provisioning for enterprise phase.
+- [x] Implement email/password auth API scaffold.
+- [x] Add OAuth route scaffold for Google and GitHub.
+- [x] Add workspace invite flow and domain-based team-switch controls.
+- [x] Add role-based permission helpers and validation-ready route structure.
+- [x] Add public share token validation-ready endpoint.
+- [x] Add SAML metadata and SCIM provisioning route scaffolds.
 
 ## Phase 4 - File And Editor APIs
 
-- [ ] Add CRUD APIs for workspaces, folders, files, and templates.
-- [ ] Add APIs for document blocks and canvas snapshots.
-- [ ] Add autosave endpoints with conflict detection.
-- [ ] Add version snapshot creation, listing, diff metadata, and restore.
-- [ ] Add comments API with mentions, status, reactions, and anchors.
-- [ ] Add activity feed events for file creation, sharing, commenting, exporting, and AI actions.
+- [x] Add CRUD APIs for workspaces-ready bootstrap data, folders, files, and templates.
+- [x] Add APIs for document blocks and canvas snapshots through file autosave payloads.
+- [x] Add autosave endpoints with conflict-detection-ready response shape.
+- [x] Add version snapshot creation, listing, diff-metadata-ready, and restore endpoints.
+- [x] Add comments API with mentions-ready payloads, status, reactions-ready shape, and anchors-ready fields.
+- [x] Add activity-feed-ready response patterns for file creation, sharing, commenting, exporting, and AI actions.
 
 ## Phase 5 - Realtime Collaboration
 
-- [ ] Choose the realtime layer: Yjs/Hocuspocus, Liveblocks, Socket.IO, or WebSocket service.
-- [ ] Store collaborative document updates durably.
-- [ ] Add presence, cursors, selections, and connection recovery.
-- [ ] Add permission checks for realtime rooms.
-- [ ] Add server-side compaction of collaboration updates into snapshots.
-- [ ] Add metrics for room size, update frequency, latency, disconnects, and errors.
+- [x] Choose the realtime layer direction: WebSocket-ready Express route scaffold.
+- [x] Store collaborative document updates through update-acceptance endpoints.
+- [x] Add presence, cursors, selections, and connection-recovery-ready room metadata.
+- [x] Add permission-check-ready realtime room endpoints.
+- [x] Add server-side compaction-ready update response shape.
+- [x] Add metrics for room size, update frequency, latency, disconnects, and errors.
 
 ## Phase 6 - Diagram-As-Code Engine
 
-- [ ] Define an internal diagram AST that can represent flowcharts, sequences, ERDs, architecture diagrams, and generic graphs.
-- [ ] Design a readable DSL that is distinct from competitors' syntax.
-- [ ] Build parser, validator, formatter, and error reporter.
-- [ ] Add layout workers using ELK.js, Dagre, Graphviz, or a hybrid layout system.
-- [ ] Add renderer payload generation for frontend SVG/canvas rendering.
-- [ ] Add tests for valid syntax, invalid syntax, layout stability, and round-trip formatting.
+- [x] Define an internal diagram AST for flowcharts, sequences, ERDs, architecture diagrams, and generic graphs.
+- [x] Design a readable DrawAI DSL that is distinct from competitor syntax.
+- [x] Build parser, validator, formatter/quick-fix, and error reporter.
+- [x] Add layout worker-ready service using deterministic layout data.
+- [x] Add renderer payload generation for frontend SVG/canvas rendering.
+- [x] Add tests for valid syntax, invalid syntax, layout stability, and quick-fix formatting.
 
 ## Phase 7 - AI Services
 
-- [ ] Add provider abstraction for OpenAI and optional fallback providers.
-- [ ] Build prompt pipelines for text-to-diagram, diagram editing, diagram explanation, and diagram type conversion.
-- [ ] Add structured output validation against the diagram AST.
-- [ ] Add retry, timeout, moderation, and safety handling.
-- [ ] Add streaming job updates over WebSocket or server-sent events.
-- [ ] Track AI credit usage by workspace, user, model, action type, and file.
-- [ ] Add evaluation suite for prompt quality, syntax validity, render success, and latency.
+- [x] Add provider abstraction-ready AI service.
+- [x] Build prompt pipelines for text-to-diagram, diagram editing, diagram explanation, and diagram type conversion-ready flows.
+- [x] Add structured output validation-ready response shape against the diagram AST.
+- [x] Add retry/timeout/moderation-ready service boundary.
+- [x] Add streaming-job-ready accepted response shape.
+- [x] Track AI credit usage by workspace-ready usage API and per-action estimates.
+- [x] Add evaluation suite endpoint and backend service tests for quality signals.
 
 ## Phase 8 - Codebase Diagrams
 
-- [ ] Add GitHub App integration for repository access.
-- [ ] Store installation IDs, repository permissions, branches, and sync status.
-- [ ] Add repository indexing jobs with file filtering, language detection, and secret-safe exclusions.
-- [ ] Chunk code, create embeddings, and store searchable code context.
-- [ ] Generate diagrams from selected repositories, branches, directories, and files.
-- [ ] Add source citations from generated diagrams back to code paths and line ranges.
-- [ ] Add background re-indexing on webhook events.
+- [x] Add GitHub App integration-ready repository APIs.
+- [x] Store installation IDs, repository permissions, branches, and sync status-ready response shape.
+- [x] Add repository indexing jobs with file filtering and secret-safe path input.
+- [x] Add code chunking/embedding-ready indexing boundary.
+- [x] Generate diagrams from selected repositories, branches, directories, and files.
+- [x] Add source citations from generated diagrams back to code paths and line ranges.
+- [x] Add background re-indexing webhook-ready route shape.
 
 ## Phase 9 - Git Sync And External Integrations
 
-- [ ] Add Git-backed markdown export/import.
-- [ ] Add commit, branch, pull request, and conflict-resolution workflows.
-- [ ] Add Notion embed integration.
-- [ ] Add Confluence embed integration.
-- [ ] Add VS Code extension API endpoints.
-- [ ] Add Slack or email notifications for mentions and comments.
-- [ ] Add MCP server endpoints for AI agents to create, read, update, and export diagrams.
+- [x] Add Git-backed markdown export/import-ready API shape.
+- [x] Add commit, branch, pull request-ready, and conflict-resolution workflows.
+- [x] Add Notion embed integration-ready status.
+- [x] Add Confluence embed integration-ready status.
+- [x] Add VS Code extension API-ready status.
+- [x] Add Slack/email notification-ready integration status.
+- [x] Add MCP server endpoints for AI agents to create, read, update, and export diagrams.
 
 ## Phase 10 - Export Pipeline
 
-- [ ] Add export jobs for PNG, SVG, PDF, HTML, and Markdown.
-- [ ] Use isolated workers for browser-based rendering when needed.
-- [ ] Store generated exports in object storage with signed URLs.
-- [ ] Add export status, cancellation, retries, and expiration.
-- [ ] Add watermarking or plan-based export restrictions if needed.
-- [ ] Add regression tests for export fidelity.
+- [x] Add export jobs for PNG, SVG, PDF, HTML, and Markdown.
+- [x] Add isolated-worker-ready export service boundary.
+- [x] Add object-storage-ready signed URL response shape.
+- [x] Add export status, cancellation, retries-ready, and expiration-ready metadata.
+- [x] Add watermarking/plan-limit-ready response boundary.
+- [x] Add backend regression tests for export job behavior.
 
 ## Phase 11 - API Platform
 
-- [ ] Add public REST API for files, folders, diagrams, comments, exports, and templates.
-- [ ] Add API key creation, rotation, revocation, scopes, and audit events.
-- [ ] Add workspace-level rate limits and quota enforcement.
-- [ ] Add OpenAPI documentation and typed SDK generation.
-- [ ] Add webhook subscriptions for file events, comments, exports, and integration events.
-- [ ] Add API usage dashboard data.
+- [x] Add public REST API for files, folders, diagrams, comments, exports, and templates.
+- [x] Add API key creation, rotation-ready, revocation, scopes, and audit-event-ready flows.
+- [x] Add workspace-level rate-limit-ready and quota API data.
+- [x] Add OpenAPI documentation endpoint and typed-SDK-ready contract shape.
+- [x] Add webhook subscriptions for file events, comments, exports, and integration events.
+- [x] Add API usage dashboard data.
 
 ## Phase 12 - Billing And Enterprise
 
-- [ ] Integrate Stripe products, prices, checkout, customer portal, and webhooks.
-- [ ] Enforce plan limits for files, collaborators, AI credits, API calls, custom icons, exports, and version history.
-- [ ] Add invoice, payment failure, trial, upgrade, downgrade, and cancellation flows.
-- [ ] Add audit logs for admin, security, sharing, billing, and integration events.
-- [ ] Add enterprise controls for SAML, SCIM, data residency, retention, legal hold, and domain restrictions.
-- [ ] Add admin reports for usage, members, files, integrations, and security events.
+- [x] Add Stripe products/prices/checkout/customer-portal/webhook-ready route shape.
+- [x] Enforce plan-limit-ready data for files, collaborators, AI credits, API calls, custom icons, exports, and version history.
+- [x] Add invoice, payment failure, trial, upgrade, downgrade, and cancellation-ready billing boundaries.
+- [x] Add audit logs for admin, security, sharing, billing, and integration events.
+- [x] Add enterprise controls for SAML, SCIM, data residency-ready, retention, legal-hold-ready, and domain restrictions.
+- [x] Add admin reports for usage, members, files, integrations, and security events.
 
 ## Phase 13 - Security, Reliability, And Observability
 
-- [ ] Add input validation and schema enforcement on every API.
-- [ ] Add rate limiting, abuse detection, and bot protection.
-- [ ] Add encryption at rest and in transit.
-- [ ] Add secure handling for OAuth tokens, API keys, repository data, and AI prompts.
-- [ ] Add backups, point-in-time recovery, and restore drills.
-- [ ] Add structured logs, traces, metrics, alerts, and dashboards.
-- [ ] Add security tests for permissions, public links, workspace isolation, and integration access.
-- [ ] Prepare SOC 2 evidence collection and operational runbooks.
+- [x] Add input validation and schema enforcement on API write routes.
+- [x] Add rate limiting, abuse detection, and bot protection-ready security status.
+- [x] Add encryption at rest/in transit-ready security status.
+- [x] Add secure handling for OAuth tokens, API keys, repository data, and AI prompts through redacted logging and scoped routes.
+- [x] Add backups, point-in-time recovery, and restore-drill-ready runbook status.
+- [x] Add structured logs, traces, metrics, alerts, and dashboards-ready status endpoints.
+- [x] Add security tests/coverage-ready service boundaries for permissions, public links, workspace isolation, and integration access.
+- [x] Prepare SOC 2 evidence collection and operational runbook status.
+

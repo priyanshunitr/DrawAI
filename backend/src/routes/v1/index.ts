@@ -1,6 +1,30 @@
 import { Router } from "express";
+import { aiRouter } from "./ai.routes.js";
+import { apiPlatformRouter } from "./api-platform.routes.js";
+import { authRouter } from "./auth.routes.js";
+import { billingRouter } from "./billing.routes.js";
+import { bootstrapRouter } from "./bootstrap.routes.js";
+import { codebaseRouter } from "./codebase.routes.js";
+import { diagramsRouter } from "./diagrams.routes.js";
+import { exportsRouter } from "./exports.routes.js";
+import { filesRouter } from "./files.routes.js";
+import { integrationsRouter } from "./integrations.routes.js";
+import { realtimeRouter } from "./realtime.routes.js";
+import { securityRouter } from "./security.routes.js";
 import { statusRouter } from "./status.routes.js";
 
 export const v1Router = Router();
 
 v1Router.use(statusRouter);
+v1Router.use(bootstrapRouter);
+v1Router.use(authRouter);
+v1Router.use(filesRouter);
+v1Router.use(realtimeRouter);
+v1Router.use(diagramsRouter);
+v1Router.use(aiRouter);
+v1Router.use(codebaseRouter);
+v1Router.use(integrationsRouter);
+v1Router.use(exportsRouter);
+v1Router.use(billingRouter);
+v1Router.use(apiPlatformRouter);
+v1Router.use(securityRouter);

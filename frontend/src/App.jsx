@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   Archive,
@@ -58,15 +58,17 @@ import {
   ZoomOut
 } from "lucide-react";
 import {
-  apiKeys,
-  comments as seedComments,
-  files,
-  integrations,
-  plans,
-  teamMembers,
-  templates,
-  versions,
-  workspace
+  apiKeys as fallbackApiKeys,
+  comments as fallbackComments,
+  files as fallbackFiles,
+  folders as fallbackFolders,
+  integrations as fallbackIntegrations,
+  plans as fallbackPlans,
+  teamMembers as fallbackTeamMembers,
+  templates as fallbackTemplates,
+  usage as fallbackUsage,
+  versions as fallbackVersions,
+  workspace as fallbackWorkspace
 } from "./data/workspace.js";
 import {
   diagramExamples,
@@ -81,8 +83,29 @@ import {
   estimateAiCredits,
   markdownToBlocks
 } from "./lib/editor.js";
+import { fetchBootstrap, saveFile } from "./lib/api.js";
 import { can, createShareToken, getRoleLabel } from "./lib/permissions.js";
 import "./App.css";
+
+const fallbackData = {
+  workspace: fallbackWorkspace,
+  files: fallbackFiles,
+  folders: fallbackFolders,
+  templates: fallbackTemplates,
+  teamMembers: fallbackTeamMembers,
+  comments: fallbackComments,
+  versions: fallbackVersions,
+  integrations: fallbackIntegrations,
+  apiKeys: fallbackApiKeys,
+  plans: fallbackPlans,
+  usage: fallbackUsage
+};
+
+const DataContext = createContext(fallbackData);
+
+function useData() {
+  return useContext(DataContext);
+}
 
 const defaultMarkdown = `## Authentication flow
 The client exchanges credentials with the API gateway, then stores a short-lived session token after workspace membership checks pass.
@@ -171,9 +194,24 @@ function SectionHeader({ eyebrow, title, actions }) {
 
 function App() {
   const [route, navigate] = useHashRoute();
+  const [data, setData] = useState(fallbackData);
+  const [apiStatus, setApiStatus] = useState("local");
   const [activeFileId, setActiveFileId] = useState("auth-architecture");
-  const activeFile = files.find((file) => file.id === activeFileId) ?? files[0];
+  const activeFile = data.files.find((file) => file.id === activeFileId) ?? data.files[0];
   const page = route.split("/")[0];
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    fetchBootstrap({ signal: controller.signal })
+      .then((nextData) => {
+        setData({ ...fallbackData, ...nextData });
+        setApiStatus("connected");
+      })
+      .catch(() => setApiStatus("local"));
+
+    return () => controller.abort();
+  }, []);
 
   function openFile(fileId) {
     setActiveFileId(fileId);
@@ -181,15 +219,19 @@ function App() {
   }
 
   return (
+    <DataContext.Provider value={data}>
     <main className="app-shell">
       <aside className="sidebar" aria-label="Workspace navigation">
         <button className="brand-row" type="button" onClick={() => navigate("dashboard")}>
           <div className="brand-mark">D</div>
           <span>
             <strong>DrawAI</strong>
-            <small>{workspace.plan}</small>
+            <small>{data.workspace.plan}</small>
           </span>
         </button>
+        <Badge tone={apiStatus === "connected" ? "good" : "warn"}>
+          API {apiStatus}
+        </Badge>
 
         <button className="new-file-button" type="button" onClick={() => openFile("auth-architecture")}>
           <Plus size={16} />
@@ -213,7 +255,7 @@ function App() {
 
         <div className="sidebar-section">
           <span className="section-label">Recent</span>
-          {files.filter((file) => file.status === "active").slice(0, 3).map((file) => (
+          {data.files.filter((file) => file.status === "active").slice(0, 3).map((file) => (
             <button
               className={file.id === activeFileId ? "file-row is-active" : "file-row"}
               key={file.id}
@@ -232,8 +274,8 @@ function App() {
         <button className="account-menu" type="button" onClick={() => navigate("auth/team")}>
           <Users size={18} />
           <span>
-            <strong>{workspace.owner}</strong>
-            <small>{workspace.domain}</small>
+            <strong>{data.workspace.owner}</strong>
+            <small>{data.workspace.domain}</small>
           </span>
           <ChevronDown size={14} />
         </button>
@@ -257,6 +299,7 @@ function App() {
         )}
       </section>
     </main>
+    </DataContext.Provider>
   );
 }
 
@@ -270,6 +313,7 @@ function NavButton({ active, icon: Icon, label, onClick }) {
 }
 
 function AuthView({ route }) {
+  const { workspace } = useData();
   const mode = route.split("/")[1] || "signin";
   const [team, setTeam] = useState(workspace.slug);
 
@@ -364,14 +408,11 @@ function AuthView({ route }) {
 }
 
 function DashboardView({ onOpenFile }) {
+  const { files, folders, templates, workspace } = useData();
   const [tab, setTab] = useState("recent");
   const views = {
     recent: files.filter((file) => file.status === "active"),
-    folders: [
-      { title: "Architecture", kind: "3 files", id: "folder-architecture" },
-      { title: "Payments", kind: "2 files", id: "folder-payments" },
-      { title: "Data model", kind: "4 files", id: "folder-data" }
-    ],
+    folders,
     templates: templates.map((title) => ({ title, kind: "Template", id: title })),
     shared: files.filter((file) => file.shared),
     trash: files.filter((file) => file.status === "trash")
@@ -428,11 +469,12 @@ function DashboardView({ onOpenFile }) {
 }
 
 function EditorView({ file }) {
+  const { comments: dataComments, teamMembers, workspace } = useData();
   const storageKey = `drawai:${file.id}`;
   const persisted = readStorage(storageKey);
   const [title, setTitle] = useState(persisted.title ?? file.title);
-  const [markdown, setMarkdown] = useState(persisted.markdown ?? defaultMarkdown);
-  const [diagramDsl, setDiagramDsl] = useState(persisted.diagramDsl ?? diagramExamples.architecture);
+  const [markdown, setMarkdown] = useState(persisted.markdown ?? file.markdown ?? defaultMarkdown);
+  const [diagramDsl, setDiagramDsl] = useState(persisted.diagramDsl ?? file.diagramDsl ?? diagramExamples.architecture);
   const [activePanel, setActivePanel] = useState("canvas");
   const [tool, setTool] = useState("select");
   const [zoom, setZoom] = useState(Number(persisted.zoom ?? 92));
@@ -452,7 +494,7 @@ function EditorView({ file }) {
   const [aiMode, setAiMode] = useState("Architecture");
   const [aiState, setAiState] = useState("idle");
   const [reviewDsl, setReviewDsl] = useState("");
-  const [commentList, setCommentList] = useState(seedComments);
+  const [commentList, setCommentList] = useState(() => dataComments.filter((comment) => comment.fileId === file.id || !comment.fileId));
   const [newComment, setNewComment] = useState("");
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [findText, setFindText] = useState("");
@@ -465,11 +507,16 @@ function EditorView({ file }) {
     setAutosave("Saving");
     const timer = window.setTimeout(() => {
       localStorage.setItem(storageKey, JSON.stringify({ title, markdown, diagramDsl, zoom }));
+      saveFile(file.id, { title, markdown, diagramDsl, contentVersion: 1 }).catch(() => undefined);
       setAutosave("Saved");
     }, 450);
 
     return () => window.clearTimeout(timer);
-  }, [storageKey, title, markdown, diagramDsl, zoom]);
+  }, [storageKey, file.id, title, markdown, diagramDsl, zoom]);
+
+  useEffect(() => {
+    setCommentList(dataComments.filter((comment) => comment.fileId === file.id || !comment.fileId));
+  }, [dataComments, file.id]);
 
   useEffect(() => {
     const handleKeydown = (event) => {
@@ -1044,11 +1091,16 @@ function PublicShareView({ file }) {
 }
 
 function IntegrationsView() {
+  const { apiKeys, integrations } = useData();
   const [repo, setRepo] = useState("drawai/core-platform");
   const [branch, setBranch] = useState("main");
   const [path, setPath] = useState("/src/auth");
   const [syncStatus, setSyncStatus] = useState("Clean");
   const [apiKeyList, setApiKeyList] = useState(apiKeys);
+
+  useEffect(() => {
+    setApiKeyList(apiKeys);
+  }, [apiKeys]);
 
   return (
     <div className="screen">
@@ -1106,6 +1158,7 @@ function IntegrationsView() {
 }
 
 function BillingAdminView() {
+  const { plans, teamMembers, usage } = useData();
   return (
     <div className="screen">
       <SectionHeader eyebrow="Workspace controls" title="Billing & admin" />
@@ -1152,10 +1205,9 @@ function BillingAdminView() {
       <section className="panel">
         <PaneHeader title="Usage and limits" icon={Activity} />
         <div className="usage-grid">
-          <Usage label="AI credits" value="1,240 / 2,000" pct="62" />
-          <Usage label="API calls" value="18,204 / 50,000" pct="36" />
-          <Usage label="Exports" value="86 / 500" pct="17" />
-          <Usage label="Version history" value="42 / 90 days" pct="47" />
+          {usage.map((item) => (
+            <Usage key={item.label} label={item.label} value={item.value} pct={item.pct} />
+          ))}
         </div>
       </section>
     </div>
@@ -1220,6 +1272,7 @@ function CommandPalette({ setActivePanel, setCommandOpen, setZoom }) {
 }
 
 function ShareModal({ file, setShareOpen }) {
+  const { teamMembers } = useData();
   const [role, setRole] = useState("viewer");
   const [token, setToken] = useState(createShareToken(file.id, role));
 
@@ -1260,6 +1313,7 @@ function ShareModal({ file, setShareOpen }) {
 }
 
 function VersionDrawer({ setVersionsOpen }) {
+  const { versions } = useData();
   return (
     <div className="modal-backdrop drawer-backdrop" role="dialog" aria-modal="true">
       <aside className="drawer">

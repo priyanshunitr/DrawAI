@@ -49,6 +49,12 @@ export const files = [
   }
 ];
 
+export const folders = [
+  { id: "folder-architecture", title: "Architecture", kind: "3 files" },
+  { id: "folder-payments", title: "Payments", kind: "2 files" },
+  { id: "folder-data", title: "Data model", kind: "4 files" }
+];
+
 export const templates = [
   "System architecture",
   "API sequence",
@@ -157,4 +163,11 @@ export const plans = [
     limit: "SAML, SCIM, audit logs",
     current: false
   }
+];
+
+export const usage = [
+  { label: "AI credits", value: "1,240 / 2,000", pct: 62 },
+  { label: "API calls", value: "18,204 / 50,000", pct: 36 },
+  { label: "Exports", value: "86 / 500", pct: 17 },
+  { label: "Version history", value: "42 / 90 days", pct: 47 }
 ];

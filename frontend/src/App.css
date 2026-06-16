@@ -2188,6 +2188,19 @@ progress::-webkit-progress-value {
   text-anchor: middle;
 }
 
+.eraser-edge-anchor-dot {
+  fill: #2f90ff;
+  stroke: #ffffff;
+  stroke-width: 1.5;
+  cursor: grab;
+  pointer-events: auto;
+  vector-effect: non-scaling-stroke;
+}
+
+.eraser-edge-anchor-dot:active {
+  cursor: grabbing;
+}
+
 .eraser-edge-segment-control {
   stroke: transparent;
   stroke-linecap: round;

@@ -1641,6 +1641,7 @@ function EraserFlowCanvas({
   const [editingNode, setEditingNode] = useState(null);
   const [selectedEdge, setSelectedEdge] = useState(null);
   const [editingEdge, setEditingEdge] = useState(null);
+  const [edgeAnchorDrag, setEdgeAnchorDrag] = useState(null);
   const [edgeSegmentDrag, setEdgeSegmentDrag] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
   const nodeMap = useMemo(() => new Map(flowNodes.map((node) => [node.id, node])), [flowNodes]);
@@ -1770,6 +1771,29 @@ function EraserFlowCanvas({
       window.removeEventListener("pointerup", handlePointerUp);
     };
   }, [connection, nodeMap, setFlowEdges, setFlowNodes, setSelectedNode]);
+
+  useEffect(() => {
+    if (!edgeAnchorDrag) return undefined;
+
+    function handlePointerMove(event) {
+      const node = nodeMap.get(edgeAnchorDrag.nodeId);
+      if (!node) return;
+      const anchor = anchorFromPoint(node, toWorldPoint(event));
+      const key = edgeAnchorDrag.endpoint === "from" ? "fromAnchor" : "toAnchor";
+      updateFlowEdge(edgeAnchorDrag.edgeId, { [key]: anchor, manualRoute: false, waypoints: [] });
+    }
+
+    function handlePointerUp() {
+      setEdgeAnchorDrag(null);
+    }
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [edgeAnchorDrag, nodeMap, setFlowEdges, zoom]);
 
   useEffect(() => {
     if (!edgeSegmentDrag) return undefined;
@@ -1941,17 +1965,34 @@ function EraserFlowCanvas({
   }
 
   function beginEdgeSegmentDrag(edge, route, segment, point) {
-    const axis = Math.abs(segment.x2 - segment.x1) < Math.abs(segment.y2 - segment.y1) ? "x" : "y";
+    const axis = segment.x1 === segment.x2 ? "x" : "y";
+    setEdgeAnchorDrag(null);
     setSelectedEdge(edge.id);
     setSelectedNode(null);
     setEditingEdge(null);
     setEdgeSegmentDrag({
       axis,
-      edgeId: edge.id,
+      edge,
       initialPoints: route.points.map((item) => ({ x: item.x, y: item.y })),
       segmentIndex: segment.index,
       startPoint: { x: point.x, y: point.y }
     });
+  }
+
+  function nearestEdgeSegment(route, point) {
+    return route.segments
+      .map((segment) => {
+        const minX = Math.min(segment.x1, segment.x2);
+        const maxX = Math.max(segment.x1, segment.x2);
+        const minY = Math.min(segment.y1, segment.y2);
+        const maxY = Math.max(segment.y1, segment.y2);
+        const projectedX = clamp(point.x, minX, maxX);
+        const projectedY = clamp(point.y, minY, maxY);
+        const dx = point.x - projectedX;
+        const dy = point.y - projectedY;
+        return { ...segment, distance: dx * dx + dy * dy };
+      })
+      .sort((left, right) => left.distance - right.distance)[0] ?? null;
   }
 
   function updateEdgeSegment(dragState, point) {
@@ -1965,21 +2006,40 @@ function EraserFlowCanvas({
 
     if (!points[leftIndex] || !points[rightIndex]) return;
 
-    if (dragState.axis === "x") {
-      if (leftIndex > 0) points[leftIndex].x = Math.round(dragState.initialPoints[leftIndex].x + delta);
-      if (rightIndex < lastIndex) points[rightIndex].x = Math.round(dragState.initialPoints[rightIndex].x + delta);
-      if (leftIndex === 1) points[leftIndex].y = points[0].y;
-      if (rightIndex === lastIndex - 1) points[rightIndex].y = points[lastIndex].y;
-    } else {
-      if (leftIndex > 0) points[leftIndex].y = Math.round(dragState.initialPoints[leftIndex].y + delta);
-      if (rightIndex < lastIndex) points[rightIndex].y = Math.round(dragState.initialPoints[rightIndex].y + delta);
-      if (leftIndex === 1) points[leftIndex].x = points[0].x;
-      if (rightIndex === lastIndex - 1) points[rightIndex].x = points[lastIndex].x;
+    if (leftIndex === 0) {
+      const node = nodeMap.get(dragState.edge.from);
+      if (!node) return;
+      updateFlowEdge(dragState.edge.id, {
+        fromAnchor: anchorFromPoint(node, point),
+        manualRoute: false,
+        waypoints: []
+      });
+      return;
     }
 
-    setFlowEdges((items) => items.map((edge) => edge.id === dragState.edgeId
-      ? { ...edge, manualRoute: true, waypoints: normalizeOrthogonalPoints(points).slice(1, -1) }
-      : edge));
+    if (rightIndex === lastIndex) {
+      const node = nodeMap.get(dragState.edge.to);
+      if (!node) return;
+      updateFlowEdge(dragState.edge.id, {
+        toAnchor: anchorFromPoint(node, point),
+        manualRoute: false,
+        waypoints: []
+      });
+      return;
+    }
+
+    if (dragState.axis === "x") {
+      points[leftIndex].x = Math.round(points[leftIndex].x + delta);
+      points[rightIndex].x = Math.round(points[rightIndex].x + delta);
+    } else {
+      points[leftIndex].y = Math.round(points[leftIndex].y + delta);
+      points[rightIndex].y = Math.round(points[rightIndex].y + delta);
+    }
+
+    updateFlowEdge(dragState.edge.id, {
+      manualRoute: true,
+      waypoints: normalizeOrthogonalPoints(points).slice(1, -1)
+    });
   }
 
   function createEdge(from, to) {
@@ -2010,6 +2070,31 @@ function EraserFlowCanvas({
     return { x: node.x + node.w / 2, y: node.y + node.h / 2 };
   }
 
+  function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  function anchorPoint(node, anchor) {
+    if (!anchor) return null;
+    const t = clamp(Number(anchor.t ?? 0.5), 0, 1);
+    if (anchor.side === "top") return { x: Math.round(node.x + node.w * t), y: node.y, normalX: 0, normalY: -1 };
+    if (anchor.side === "bottom") return { x: Math.round(node.x + node.w * t), y: node.y + node.h, normalX: 0, normalY: 1 };
+    if (anchor.side === "left") return { x: node.x, y: Math.round(node.y + node.h * t), normalX: -1, normalY: 0 };
+    if (anchor.side === "right") return { x: node.x + node.w, y: Math.round(node.y + node.h * t), normalX: 1, normalY: 0 };
+    return null;
+  }
+
+  function anchorFromPoint(node, point) {
+    const distances = [
+      { side: "left", value: Math.abs(point.x - node.x), t: clamp((point.y - node.y) / node.h, 0, 1) },
+      { side: "right", value: Math.abs(point.x - (node.x + node.w)), t: clamp((point.y - node.y) / node.h, 0, 1) },
+      { side: "top", value: Math.abs(point.y - node.y), t: clamp((point.x - node.x) / node.w, 0, 1) },
+      { side: "bottom", value: Math.abs(point.y - (node.y + node.h)), t: clamp((point.x - node.x) / node.w, 0, 1) }
+    ];
+    const closest = distances.sort((left, right) => left.value - right.value)[0];
+    return { side: closest.side, t: Number(closest.t.toFixed(3)) };
+  }
+
   function nodeAnchor(node, target) {
     const center = nodeCenter(node);
     const dx = target.x - center.x;
@@ -2024,6 +2109,10 @@ function EraserFlowCanvas({
     return dy >= 0
       ? { x: center.x, y: node.y + node.h, normalX: 0, normalY: 1 }
       : { x: center.x, y: node.y, normalX: 0, normalY: -1 };
+  }
+
+  function edgeNodeAnchor(node, anchor, fallbackTarget) {
+    return anchorPoint(node, anchor) ?? nodeAnchor(node, fallbackTarget);
   }
 
   function compactPoints(points) {
@@ -2177,30 +2266,12 @@ function EraserFlowCanvas({
       .sort((left, right) => left.score - right.score)[0]?.points ?? [start, end];
   }
 
-  function longestInternalSegment(points) {
-    const segments = edgeSegments(points);
-    const internal = segments.filter((segment) => segment.index > 0 && segment.index + 1 < points.length - 1);
-    const candidates = internal.length ? internal : segments;
-    return candidates
-      .map((segment) => ({
-        ...segment,
-        length: Math.abs(segment.x2 - segment.x1) + Math.abs(segment.y2 - segment.y1)
-      }))
-      .sort((left, right) => right.length - left.length)[0] ?? null;
-  }
-
   function simpleOrthogonalRoute(start, end, waypoints) {
-    if (start.x === end.x || start.y === end.y) return [start, end];
-
     if (waypoints.length) {
-      const manualPoints = normalizeOrthogonalPoints([start, ...waypoints, end]);
-      const preserved = longestInternalSegment(manualPoints);
-      if (preserved) {
-        return preserved.x1 === preserved.x2
-          ? normalizeOrthogonalPoints([start, { x: preserved.x1, y: start.y }, { x: preserved.x1, y: end.y }, end])
-          : normalizeOrthogonalPoints([start, { x: start.x, y: preserved.y1 }, { x: end.x, y: preserved.y1 }, end]);
-      }
+      return normalizeOrthogonalPoints([start, ...waypoints, end]);
     }
+
+    if (start.x === end.x || start.y === end.y) return [start, end];
 
     const middleX = Math.round((start.x + end.x) / 2);
     const middleY = Math.round((start.y + end.y) / 2);
@@ -2220,10 +2291,10 @@ function EraserFlowCanvas({
     const waypoints = edgeWaypoints(edge);
     const start = dragOverride?.endpoint === "from"
       ? { x: dragOverride.x, y: dragOverride.y, normalX: 0, normalY: 0 }
-      : nodeAnchor(from, dragOverride?.endpoint === "to" ? dragOverride : toCenter);
+      : edgeNodeAnchor(from, edge.fromAnchor, dragOverride?.endpoint === "to" ? dragOverride : toCenter);
     const end = dragOverride?.endpoint === "to"
       ? { x: dragOverride.x, y: dragOverride.y, normalX: 0, normalY: 0 }
-      : nodeAnchor(to, dragOverride?.endpoint === "from" ? dragOverride : fromCenter);
+      : edgeNodeAnchor(to, edge.toAnchor, dragOverride?.endpoint === "from" ? dragOverride : fromCenter);
     const points = simpleOrthogonalRoute(start, end, waypoints);
     const labelPoint = edgeLabelPoint(points);
 
@@ -2327,8 +2398,14 @@ function EraserFlowCanvas({
                   onPointerDown={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
-                    setSelectedEdge(edge.id);
-                    setSelectedNode(null);
+                    const point = toWorldPoint(event);
+                    const segment = nearestEdgeSegment(route, point);
+                    if (segment) {
+                      beginEdgeSegmentDrag(edge, route, segment, point);
+                    } else {
+                      setSelectedEdge(edge.id);
+                      setSelectedNode(null);
+                    }
                   }}
                 />
                 <path
@@ -2391,13 +2468,37 @@ function EraserFlowCanvas({
                           event.stopPropagation();
                           setEditingEdge(edge.id);
                         }}
-                        onPointerDown={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          beginEdgeSegmentDrag(edge, route, segment, toWorldPoint(event));
-                        }}
+                      onPointerDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        beginEdgeSegmentDrag(edge, route, segment, toWorldPoint(event));
+                      }}
                       />
                     ))}
+                    <circle
+                      className="eraser-edge-anchor-dot"
+                      cx={route.start.x}
+                      cy={route.start.y}
+                      r="6"
+                      onPointerDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setEdgeSegmentDrag(null);
+                        setEdgeAnchorDrag({ edgeId: edge.id, endpoint: "from", nodeId: edge.from });
+                      }}
+                    />
+                    <circle
+                      className="eraser-edge-anchor-dot"
+                      cx={route.end.x}
+                      cy={route.end.y}
+                      r="6"
+                      onPointerDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setEdgeSegmentDrag(null);
+                        setEdgeAnchorDrag({ edgeId: edge.id, endpoint: "to", nodeId: edge.to });
+                      }}
+                    />
                   </>
                 ) : null}
               </g>

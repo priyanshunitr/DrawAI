@@ -2130,21 +2130,47 @@ progress::-webkit-progress-value {
 .eraser-flow-lines {
   position: absolute;
   inset: 0;
-  z-index: 2;
+  z-index: 4;
   overflow: visible;
   pointer-events: none;
 }
 
-.eraser-flow-lines path {
+.eraser-flow-edge {
+  pointer-events: none;
+}
+
+.eraser-flow-edge-visible,
+.eraser-flow-lines path.is-draft {
   fill: none;
   stroke: #d8d8d8;
   stroke-width: 2;
-  marker-end: url("#eraser-arrow");
+  vector-effect: non-scaling-stroke;
+}
+
+.eraser-flow-edge-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 18;
+  cursor: pointer;
+  pointer-events: stroke;
+  vector-effect: non-scaling-stroke;
+}
+
+.eraser-flow-edge.is-selected .eraser-flow-edge-visible {
+  stroke: #2f90ff;
+}
+
+.eraser-flow-edge-visible {
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .eraser-flow-lines path.is-draft {
-  stroke: #2f70ed;
+  stroke: #2f90ff;
   stroke-dasharray: 8 7;
+  marker-end: url("#eraser-arrow-selected");
 }
 
 .eraser-flow-lines text {
@@ -2154,6 +2180,44 @@ progress::-webkit-progress-value {
   stroke-width: 4px;
   font-size: 13px;
   font-weight: 900;
+}
+
+.eraser-flow-edge-label {
+  cursor: text;
+  pointer-events: auto;
+  text-anchor: middle;
+}
+
+.eraser-edge-handle {
+  fill: #2f90ff;
+  stroke: #151515;
+  stroke-width: 2;
+  cursor: grab;
+  pointer-events: auto;
+  vector-effect: non-scaling-stroke;
+}
+
+.eraser-edge-handle:active {
+  cursor: grabbing;
+}
+
+.eraser-edge-label-editor-wrap {
+  overflow: visible;
+  pointer-events: auto;
+}
+
+.eraser-edge-label-editor {
+  width: 168px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid #2f90ff;
+  border-radius: 4px;
+  color: #ffffff;
+  background: #171717;
+  outline: 0;
+  font-size: 12px;
+  font-weight: 900;
+  text-align: center;
 }
 
 .eraser-flow-node {

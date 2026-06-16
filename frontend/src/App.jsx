@@ -1639,6 +1639,9 @@ function EraserFlowCanvas({
   const [connection, setConnection] = useState(null);
   const [viewportDrag, setViewportDrag] = useState(null);
   const [editingNode, setEditingNode] = useState(null);
+  const [selectedEdge, setSelectedEdge] = useState(null);
+  const [editingEdge, setEditingEdge] = useState(null);
+  const [edgeHandleDrag, setEdgeHandleDrag] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
   const nodeMap = useMemo(() => new Map(flowNodes.map((node) => [node.id, node])), [flowNodes]);
 
@@ -1769,6 +1772,39 @@ function EraserFlowCanvas({
   }, [connection, nodeMap, setFlowEdges, setFlowNodes, setSelectedNode]);
 
   useEffect(() => {
+    if (!edgeHandleDrag) return undefined;
+
+    function handlePointerMove(event) {
+      setEdgeHandleDrag((current) => current ? { ...current, ...toWorldPoint(event) } : null);
+    }
+
+    function handlePointerUp(event) {
+      const target = event.target instanceof Element
+        ? event.target.closest(".eraser-flow-node")
+        : document.elementFromPoint(event.clientX, event.clientY)?.closest(".eraser-flow-node");
+      const targetId = target?.getAttribute("data-node-id");
+
+      if (targetId) {
+        setFlowEdges((items) => items.map((edge) => {
+          if (edge.id !== edgeHandleDrag.edgeId) return edge;
+          if (edgeHandleDrag.endpoint === "from" && targetId !== edge.to) return { ...edge, from: targetId };
+          if (edgeHandleDrag.endpoint === "to" && targetId !== edge.from) return { ...edge, to: targetId };
+          return edge;
+        }));
+      }
+
+      setEdgeHandleDrag(null);
+    }
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [edgeHandleDrag, setFlowEdges, zoom]);
+
+  useEffect(() => {
     if (!viewportDrag) return undefined;
 
     function handlePointerMove(event) {
@@ -1795,6 +1831,25 @@ function EraserFlowCanvas({
       if (event.code === "Space" && !isTextInputTarget(event.target)) {
         spacePressedRef.current = true;
       }
+
+      if (selectedEdge && !isTextInputTarget(event.target)) {
+        if (event.key === "Backspace" || event.key === "Delete") {
+          event.preventDefault();
+          setFlowEdges((items) => items.filter((edge) => edge.id !== selectedEdge));
+          setSelectedEdge(null);
+          setEditingEdge(null);
+        }
+
+        if (event.key === "Enter") {
+          event.preventDefault();
+          setEditingEdge(selectedEdge);
+        }
+
+        if (event.key === "Escape") {
+          setSelectedEdge(null);
+          setEditingEdge(null);
+        }
+      }
     }
 
     function handleKeyUp(event) {
@@ -1809,7 +1864,7 @@ function EraserFlowCanvas({
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
     };
-  }, []);
+  }, [selectedEdge, setFlowEdges]);
 
   useEffect(() => {
     if (!contextMenu) return undefined;
@@ -1883,7 +1938,14 @@ function EraserFlowCanvas({
       addNodeAt(event);
       return;
     }
-    if (tool === "select") setSelectedNode(null);
+    if (tool === "select") {
+      setSelectedNode(null);
+      setSelectedEdge(null);
+    }
+  }
+
+  function updateFlowEdge(edgeId, patch) {
+    setFlowEdges((items) => items.map((item) => item.id === edgeId ? { ...item, ...patch } : item));
   }
 
   function createEdge(from, to) {
@@ -1892,6 +1954,7 @@ function EraserFlowCanvas({
       return [...items, { id: `edge-${from}-${to}-${Date.now()}`, from, to, label: "" }];
     });
     setSelectedNode(to);
+    setSelectedEdge(null);
   }
 
   function addConnectedNode(node) {
@@ -1906,24 +1969,121 @@ function EraserFlowCanvas({
     const start = { x: node.x + node.w, y: node.y + node.h / 2 };
     setConnection({ from: node.id, ...start });
     setSelectedNode(node.id);
+    setSelectedEdge(null);
   }
 
-  function edgePath(from, to) {
-    const startX = from.x + from.w;
-    const startY = from.y + from.h / 2;
-    const endX = to.x;
-    const endY = to.y + to.h / 2;
-    const delta = Math.max(48, Math.abs(endX - startX) / 2);
-    return `M${startX} ${startY} C${startX + delta} ${startY}, ${endX - delta} ${endY}, ${endX} ${endY}`;
+  function nodeCenter(node) {
+    return { x: node.x + node.w / 2, y: node.y + node.h / 2 };
+  }
+
+  function nodeAnchor(node, target) {
+    const center = nodeCenter(node);
+    const dx = target.x - center.x;
+    const dy = target.y - center.y;
+
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      return dx >= 0
+        ? { x: node.x + node.w, y: center.y, normalX: 1, normalY: 0 }
+        : { x: node.x, y: center.y, normalX: -1, normalY: 0 };
+    }
+
+    return dy >= 0
+      ? { x: center.x, y: node.y + node.h, normalX: 0, normalY: 1 }
+      : { x: center.x, y: node.y, normalX: 0, normalY: -1 };
+  }
+
+  function compactPoints(points) {
+    return points.filter((point, index) => {
+      const previous = points[index - 1];
+      return !previous || previous.x !== point.x || previous.y !== point.y;
+    });
+  }
+
+  function roundedPolylinePath(points, radius = 12) {
+    const compact = compactPoints(points);
+    if (compact.length < 2) return "";
+
+    const pieces = [`M${compact[0].x} ${compact[0].y}`];
+
+    for (let index = 1; index < compact.length - 1; index += 1) {
+      const previous = compact[index - 1];
+      const current = compact[index];
+      const next = compact[index + 1];
+      const beforeLength = Math.hypot(current.x - previous.x, current.y - previous.y);
+      const afterLength = Math.hypot(next.x - current.x, next.y - current.y);
+      const corner = Math.min(radius, beforeLength / 2, afterLength / 2);
+      const before = {
+        x: current.x - Math.sign(current.x - previous.x) * corner,
+        y: current.y - Math.sign(current.y - previous.y) * corner
+      };
+      const after = {
+        x: current.x + Math.sign(next.x - current.x) * corner,
+        y: current.y + Math.sign(next.y - current.y) * corner
+      };
+
+      pieces.push(`L${before.x} ${before.y}`, `Q${current.x} ${current.y} ${after.x} ${after.y}`);
+    }
+
+    const last = compact[compact.length - 1];
+    pieces.push(`L${last.x} ${last.y}`);
+    return pieces.join(" ");
+  }
+
+  function edgeRoute(from, to, dragOverride = null) {
+    const fromCenter = nodeCenter(from);
+    const toCenter = nodeCenter(to);
+    const start = dragOverride?.endpoint === "from"
+      ? { x: dragOverride.x, y: dragOverride.y, normalX: 0, normalY: 0 }
+      : nodeAnchor(from, dragOverride?.endpoint === "to" ? dragOverride : toCenter);
+    const end = dragOverride?.endpoint === "to"
+      ? { x: dragOverride.x, y: dragOverride.y, normalX: 0, normalY: 0 }
+      : nodeAnchor(to, dragOverride?.endpoint === "from" ? dragOverride : fromCenter);
+    const lead = 34;
+    const startLead = { x: start.x + start.normalX * lead, y: start.y + start.normalY * lead };
+    const endLead = { x: end.x + end.normalX * lead, y: end.y + end.normalY * lead };
+    const mostlyHorizontal = Math.abs(endLead.x - startLead.x) >= Math.abs(endLead.y - startLead.y);
+    const points = mostlyHorizontal
+      ? [
+          start,
+          startLead,
+          { x: Math.round((startLead.x + endLead.x) / 2), y: startLead.y },
+          { x: Math.round((startLead.x + endLead.x) / 2), y: endLead.y },
+          endLead,
+          end
+        ]
+      : [
+          start,
+          startLead,
+          { x: startLead.x, y: Math.round((startLead.y + endLead.y) / 2) },
+          { x: endLead.x, y: Math.round((startLead.y + endLead.y) / 2) },
+          endLead,
+          end
+        ];
+    const compact = compactPoints(points);
+    const labelPoint = compact[Math.max(1, Math.floor(compact.length / 2))] ?? {
+      x: Math.round((start.x + end.x) / 2),
+      y: Math.round((start.y + end.y) / 2)
+    };
+
+    return {
+      start,
+      end,
+      labelX: labelPoint.x,
+      labelY: labelPoint.y,
+      path: roundedPolylinePath(compact)
+    };
   }
 
   function draftEdgePath() {
     const from = connection ? nodeMap.get(connection.from) : null;
     if (!from || !connection) return "";
-    const startX = from.x + from.w;
-    const startY = from.y + from.h / 2;
-    const delta = Math.max(48, Math.abs(connection.x - startX) / 2);
-    return `M${startX} ${startY} C${startX + delta} ${startY}, ${connection.x - delta} ${connection.y}, ${connection.x} ${connection.y}`;
+    const route = edgeRoute(from, {
+      x: connection.x - 1,
+      y: connection.y - 1,
+      w: 2,
+      h: 2
+    }, { endpoint: "to", x: connection.x, y: connection.y });
+    return route.path;
   }
 
   function removeNode(nodeId) {
@@ -1977,17 +2137,107 @@ function EraserFlowCanvas({
             <marker id="eraser-arrow" markerHeight="8" markerWidth="8" orient="auto" refX="7" refY="4">
               <path d="M0,0 L8,4 L0,8 Z" fill="#d8d8d8" />
             </marker>
+            <marker id="eraser-arrow-selected" markerHeight="8" markerWidth="8" orient="auto" refX="7" refY="4">
+              <path d="M0,0 L8,4 L0,8 Z" fill="#2f90ff" />
+            </marker>
           </defs>
           {flowEdges.map((edge) => {
             const from = nodeMap.get(edge.from);
             const to = nodeMap.get(edge.to);
             if (!from || !to) return null;
-            const midX = (from.x + from.w + to.x) / 2;
-            const midY = (from.y + from.h / 2 + to.y + to.h / 2) / 2;
+            const dragOverride = edgeHandleDrag?.edgeId === edge.id ? edgeHandleDrag : null;
+            const route = edgeRoute(from, to, dragOverride);
+            const isSelected = selectedEdge === edge.id;
             return (
-              <g key={edge.id}>
-                <path d={edgePath(from, to)} />
-                {edge.label ? <text x={midX} y={midY - 8}>{edge.label}</text> : null}
+              <g className={isSelected ? "eraser-flow-edge is-selected" : "eraser-flow-edge"} key={edge.id}>
+                <path
+                  className="eraser-flow-edge-hit"
+                  d={route.path}
+                  onDoubleClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setSelectedEdge(edge.id);
+                    setSelectedNode(null);
+                    setEditingEdge(edge.id);
+                  }}
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setSelectedEdge(edge.id);
+                    setSelectedNode(null);
+                  }}
+                />
+                <path
+                  className="eraser-flow-edge-visible"
+                  d={route.path}
+                  markerEnd={`url(#${isSelected ? "eraser-arrow-selected" : "eraser-arrow"})`}
+                />
+                {editingEdge === edge.id ? (
+                  <foreignObject className="eraser-edge-label-editor-wrap" x={route.labelX - 84} y={route.labelY - 18} width="168" height="36">
+                    <input
+                      autoFocus
+                      className="eraser-edge-label-editor"
+                      value={edge.label}
+                      onBlur={() => setEditingEdge(null)}
+                      onChange={(event) => updateFlowEdge(edge.id, { label: event.target.value })}
+                      onKeyDown={(event) => {
+                        event.stopPropagation();
+                        if (event.key === "Escape" || event.key === "Enter") {
+                          event.preventDefault();
+                          setEditingEdge(null);
+                        }
+                      }}
+                      onPointerDown={(event) => event.stopPropagation()}
+                      placeholder="Label"
+                    />
+                  </foreignObject>
+                ) : edge.label ? (
+                  <text
+                    className="eraser-flow-edge-label"
+                    x={route.labelX}
+                    y={route.labelY - 8}
+                    onDoubleClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setSelectedEdge(edge.id);
+                      setEditingEdge(edge.id);
+                    }}
+                    onPointerDown={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setSelectedEdge(edge.id);
+                      setSelectedNode(null);
+                    }}
+                  >
+                    {edge.label}
+                  </text>
+                ) : null}
+                {isSelected && editingEdge !== edge.id ? (
+                  <>
+                    <circle
+                      className="eraser-edge-handle"
+                      cx={route.start.x}
+                      cy={route.start.y}
+                      r="5"
+                      onPointerDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setEdgeHandleDrag({ edgeId: edge.id, endpoint: "from", x: route.start.x, y: route.start.y });
+                      }}
+                    />
+                    <circle
+                      className="eraser-edge-handle"
+                      cx={route.end.x}
+                      cy={route.end.y}
+                      r="5"
+                      onPointerDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setEdgeHandleDrag({ edgeId: edge.id, endpoint: "to", x: route.end.x, y: route.end.y });
+                      }}
+                    />
+                  </>
+                ) : null}
               </g>
             );
           })}
@@ -2002,16 +2252,21 @@ function EraserFlowCanvas({
             role="button"
             style={{ left: node.x, top: node.y, width: node.w, height: node.h }}
             tabIndex="0"
-            onClick={() => setSelectedNode(node.id)}
+            onClick={() => {
+              setSelectedNode(node.id);
+              setSelectedEdge(null);
+            }}
             onContextMenu={(event) => {
               event.preventDefault();
               event.stopPropagation();
               setSelectedNode(node.id);
+              setSelectedEdge(null);
               setContextMenu({ nodeId: node.id, x: event.clientX, y: event.clientY });
             }}
             onDoubleClick={(event) => {
               event.stopPropagation();
               setSelectedNode(node.id);
+              setSelectedEdge(null);
               setEditingNode(node.id);
             }}
             onKeyDown={(event) => {
@@ -2031,6 +2286,7 @@ function EraserFlowCanvas({
               if (event.button !== 0) return;
               if (event.target instanceof Element && event.target.closest(".eraser-resize-handle, .eraser-node-plus")) return;
               setSelectedNode(node.id);
+              setSelectedEdge(null);
               if (tool === "arrow" || tool === "line") {
                 startConnection(event, node);
                 return;

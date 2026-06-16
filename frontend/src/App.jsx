@@ -1935,7 +1935,7 @@ function EraserFlowCanvas({
   }
 
   function edgeWaypoints(edge) {
-    return Array.isArray(edge.waypoints)
+    return edge.manualRoute && Array.isArray(edge.waypoints)
       ? edge.waypoints.map((point) => ({ x: Math.round(point.x), y: Math.round(point.y) }))
       : [];
   }
@@ -1978,7 +1978,7 @@ function EraserFlowCanvas({
     }
 
     setFlowEdges((items) => items.map((edge) => edge.id === dragState.edgeId
-      ? { ...edge, waypoints: normalizeOrthogonalPoints(points).slice(1, -1) }
+      ? { ...edge, manualRoute: true, waypoints: normalizeOrthogonalPoints(points).slice(1, -1) }
       : edge));
   }
 
@@ -2143,39 +2143,88 @@ function EraserFlowCanvas({
     }).filter((segment) => segment.x1 !== segment.x2 || segment.y1 !== segment.y2);
   }
 
+  function routeLength(points) {
+    return points.slice(1).reduce((sum, point, index) => (
+      sum + Math.abs(point.x - points[index].x) + Math.abs(point.y - points[index].y)
+    ), 0);
+  }
+
+  function firstSegmentMatchesAnchor(points, anchor) {
+    const next = points[1];
+    if (!next) return false;
+    if (anchor.normalX) return next.y === anchor.y;
+    if (anchor.normalY) return next.x === anchor.x;
+    return true;
+  }
+
+  function lastSegmentMatchesAnchor(points, anchor) {
+    const previous = points[points.length - 2];
+    if (!previous) return false;
+    if (anchor.normalX) return previous.y === anchor.y;
+    if (anchor.normalY) return previous.x === anchor.x;
+    return true;
+  }
+
+  function chooseShortestRoute(candidates, start, end) {
+    return candidates
+      .map((points) => normalizeOrthogonalPoints(points))
+      .map((points) => ({
+        points,
+        score: routeLength(points)
+          + (firstSegmentMatchesAnchor(points, start) ? 0 : 800)
+          + (lastSegmentMatchesAnchor(points, end) ? 0 : 800)
+      }))
+      .sort((left, right) => left.score - right.score)[0]?.points ?? [start, end];
+  }
+
+  function longestInternalSegment(points) {
+    const segments = edgeSegments(points);
+    const internal = segments.filter((segment) => segment.index > 0 && segment.index + 1 < points.length - 1);
+    const candidates = internal.length ? internal : segments;
+    return candidates
+      .map((segment) => ({
+        ...segment,
+        length: Math.abs(segment.x2 - segment.x1) + Math.abs(segment.y2 - segment.y1)
+      }))
+      .sort((left, right) => right.length - left.length)[0] ?? null;
+  }
+
+  function simpleOrthogonalRoute(start, end, waypoints) {
+    if (start.x === end.x || start.y === end.y) return [start, end];
+
+    if (waypoints.length) {
+      const manualPoints = normalizeOrthogonalPoints([start, ...waypoints, end]);
+      const preserved = longestInternalSegment(manualPoints);
+      if (preserved) {
+        return preserved.x1 === preserved.x2
+          ? normalizeOrthogonalPoints([start, { x: preserved.x1, y: start.y }, { x: preserved.x1, y: end.y }, end])
+          : normalizeOrthogonalPoints([start, { x: start.x, y: preserved.y1 }, { x: end.x, y: preserved.y1 }, end]);
+      }
+    }
+
+    const middleX = Math.round((start.x + end.x) / 2);
+    const middleY = Math.round((start.y + end.y) / 2);
+    const candidates = [
+      [start, { x: end.x, y: start.y }, end],
+      [start, { x: start.x, y: end.y }, end],
+      [start, { x: middleX, y: start.y }, { x: middleX, y: end.y }, end],
+      [start, { x: start.x, y: middleY }, { x: end.x, y: middleY }, end]
+    ];
+
+    return chooseShortestRoute(candidates, start, end);
+  }
+
   function edgeRoute(edge, from, to, dragOverride = null) {
     const fromCenter = nodeCenter(from);
     const toCenter = nodeCenter(to);
     const waypoints = edgeWaypoints(edge);
     const start = dragOverride?.endpoint === "from"
       ? { x: dragOverride.x, y: dragOverride.y, normalX: 0, normalY: 0 }
-      : nodeAnchor(from, waypoints[0] ?? (dragOverride?.endpoint === "to" ? dragOverride : toCenter));
+      : nodeAnchor(from, dragOverride?.endpoint === "to" ? dragOverride : toCenter);
     const end = dragOverride?.endpoint === "to"
       ? { x: dragOverride.x, y: dragOverride.y, normalX: 0, normalY: 0 }
-      : nodeAnchor(to, waypoints[waypoints.length - 1] ?? (dragOverride?.endpoint === "from" ? dragOverride : fromCenter));
-    const lead = 34;
-    const startLead = { x: start.x + start.normalX * lead, y: start.y + start.normalY * lead };
-    const endLead = { x: end.x + end.normalX * lead, y: end.y + end.normalY * lead };
-    const mostlyHorizontal = Math.abs(endLead.x - startLead.x) >= Math.abs(endLead.y - startLead.y);
-    const autoPoints = mostlyHorizontal
-      ? [
-          start,
-          startLead,
-          { x: Math.round((startLead.x + endLead.x) / 2), y: startLead.y },
-          { x: Math.round((startLead.x + endLead.x) / 2), y: endLead.y },
-          endLead,
-          end
-        ]
-      : [
-          start,
-          startLead,
-          { x: startLead.x, y: Math.round((startLead.y + endLead.y) / 2) },
-          { x: endLead.x, y: Math.round((startLead.y + endLead.y) / 2) },
-          endLead,
-          end
-        ];
-    const manualPoints = [start, ...waypoints, end];
-    const points = normalizeOrthogonalPoints(waypoints.length ? manualPoints : autoPoints);
+      : nodeAnchor(to, dragOverride?.endpoint === "from" ? dragOverride : fromCenter);
+    const points = simpleOrthogonalRoute(start, end, waypoints);
     const labelPoint = edgeLabelPoint(points);
 
     return {
@@ -2329,9 +2378,7 @@ function EraserFlowCanvas({
                 ) : null}
                 {isSelected && editingEdge !== edge.id ? (
                   <>
-                    {route.segments
-                      .filter((segment) => segment.index > 0 && segment.index + 1 < route.points.length - 1)
-                      .map((segment) => (
+                    {route.segments.map((segment) => (
                       <line
                         className="eraser-edge-segment-control"
                         key={`segment-${segment.index}`}

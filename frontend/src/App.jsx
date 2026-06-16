@@ -152,6 +152,7 @@ const aiTemplates = ["Architecture", "Sequence", "Flowchart", "ERD", "API flow",
 const aiActions = ["Simplify", "Expand", "Restyle", "Rename nodes", "Add service", "Convert type", "Explain"];
 const editorStates = ["Normal", "Loading", "Offline", "Permission denied", "Error"];
 const workspaceStorageKey = "drawai:workspace";
+const edgeSnapDistance = 12;
 const mcpExampleArguments = {
   "workspace.bootstrap": {},
   "files.list": {},
@@ -1995,6 +1996,42 @@ function EraserFlowCanvas({
       .sort((left, right) => left.distance - right.distance)[0] ?? null;
   }
 
+  function snapValue(value, candidates) {
+    return candidates.reduce((closest, candidate) => {
+      const distance = Math.abs(candidate - value);
+      if (distance > edgeSnapDistance || distance >= closest.distance) return closest;
+      return { distance, value: candidate };
+    }, { distance: edgeSnapDistance + 1, value }).value;
+  }
+
+  function edgeSnapCandidates(edgeId, axis, initialPoints, ignoredPointIndexes) {
+    const ignored = new Set(ignoredPointIndexes);
+    const candidates = [];
+
+    initialPoints.forEach((routePoint, index) => {
+      if (!ignored.has(index)) candidates.push(axis === "x" ? routePoint.x : routePoint.y);
+    });
+
+    flowEdges.forEach((edge) => {
+      if (edge.id === edgeId) return;
+      const from = nodeMap.get(edge.from);
+      const to = nodeMap.get(edge.to);
+      if (!from || !to) return;
+      edgeRoute(edge, from, to).points.forEach((routePoint) => {
+        candidates.push(axis === "x" ? routePoint.x : routePoint.y);
+      });
+    });
+
+    return candidates.filter(Number.isFinite);
+  }
+
+  function snapDraggedCoordinate(dragState, value, ignoredPointIndexes) {
+    return Math.round(snapValue(
+      value,
+      edgeSnapCandidates(dragState.edge.id, dragState.axis, dragState.initialPoints, ignoredPointIndexes)
+    ));
+  }
+
   function updateEdgeSegment(dragState, point) {
     const points = dragState.initialPoints.map((item) => ({ ...item }));
     const lastIndex = points.length - 1;
@@ -2006,34 +2043,42 @@ function EraserFlowCanvas({
 
     if (!points[leftIndex] || !points[rightIndex]) return;
 
-    if (leftIndex === 0) {
-      const node = nodeMap.get(dragState.edge.from);
-      if (!node) return;
-      updateFlowEdge(dragState.edge.id, {
-        fromAnchor: anchorFromPoint(node, point),
-        manualRoute: false,
-        waypoints: []
-      });
-      return;
-    }
-
-    if (rightIndex === lastIndex) {
-      const node = nodeMap.get(dragState.edge.to);
-      if (!node) return;
-      updateFlowEdge(dragState.edge.id, {
-        toAnchor: anchorFromPoint(node, point),
-        manualRoute: false,
-        waypoints: []
-      });
-      return;
-    }
-
-    if (dragState.axis === "x") {
-      points[leftIndex].x = Math.round(points[leftIndex].x + delta);
-      points[rightIndex].x = Math.round(points[rightIndex].x + delta);
+    if (leftIndex === 0 && rightIndex === lastIndex) {
+      if (dragState.axis === "x") {
+        const x = snapDraggedCoordinate(dragState, Math.round(points[leftIndex].x + delta), [leftIndex, rightIndex]);
+        points.splice(1, 0, { x, y: points[leftIndex].y }, { x, y: points[rightIndex].y });
+      } else {
+        const y = snapDraggedCoordinate(dragState, Math.round(points[leftIndex].y + delta), [leftIndex, rightIndex]);
+        points.splice(1, 0, { x: points[leftIndex].x, y }, { x: points[rightIndex].x, y });
+      }
+    } else if (leftIndex === 0) {
+      if (dragState.axis === "x") {
+        const x = snapDraggedCoordinate(dragState, Math.round(points[rightIndex].x + delta), [leftIndex, rightIndex]);
+        points[rightIndex].x = x;
+        points.splice(1, 0, { x, y: points[0].y });
+      } else {
+        const y = snapDraggedCoordinate(dragState, Math.round(points[rightIndex].y + delta), [leftIndex, rightIndex]);
+        points[rightIndex].y = y;
+        points.splice(1, 0, { x: points[0].x, y });
+      }
+    } else if (rightIndex === lastIndex) {
+      if (dragState.axis === "x") {
+        const x = snapDraggedCoordinate(dragState, Math.round(points[leftIndex].x + delta), [leftIndex, rightIndex]);
+        points[leftIndex].x = x;
+        points.splice(lastIndex, 0, { x, y: points[lastIndex].y });
+      } else {
+        const y = snapDraggedCoordinate(dragState, Math.round(points[leftIndex].y + delta), [leftIndex, rightIndex]);
+        points[leftIndex].y = y;
+        points.splice(lastIndex, 0, { x: points[lastIndex].x, y });
+      }
+    } else if (dragState.axis === "x") {
+      const x = snapDraggedCoordinate(dragState, Math.round(points[leftIndex].x + delta), [leftIndex, rightIndex]);
+      points[leftIndex].x = x;
+      points[rightIndex].x = x;
     } else {
-      points[leftIndex].y = Math.round(points[leftIndex].y + delta);
-      points[rightIndex].y = Math.round(points[rightIndex].y + delta);
+      const y = snapDraggedCoordinate(dragState, Math.round(points[leftIndex].y + delta), [leftIndex, rightIndex]);
+      points[leftIndex].y = y;
+      points[rightIndex].y = y;
     }
 
     updateFlowEdge(dragState.edge.id, {
@@ -2383,6 +2428,8 @@ function EraserFlowCanvas({
             if (!from || !to) return null;
             const route = edgeRoute(edge, from, to);
             const isSelected = selectedEdge === edge.id;
+            const canDragSegments = !edgeAnchorDrag;
+            const canDragAnchors = !edgeSegmentDrag;
             return (
               <g className={isSelected ? "eraser-flow-edge is-selected" : "eraser-flow-edge"} key={edge.id}>
                 <path
@@ -2455,7 +2502,7 @@ function EraserFlowCanvas({
                 ) : null}
                 {isSelected && editingEdge !== edge.id ? (
                   <>
-                    {route.segments.map((segment) => (
+                    {canDragSegments ? route.segments.map((segment) => (
                       <line
                         className="eraser-edge-segment-control"
                         key={`segment-${segment.index}`}
@@ -2468,37 +2515,41 @@ function EraserFlowCanvas({
                           event.stopPropagation();
                           setEditingEdge(edge.id);
                         }}
-                      onPointerDown={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        beginEdgeSegmentDrag(edge, route, segment, toWorldPoint(event));
-                      }}
+                        onPointerDown={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          beginEdgeSegmentDrag(edge, route, segment, toWorldPoint(event));
+                        }}
                       />
-                    ))}
-                    <circle
-                      className="eraser-edge-anchor-dot"
-                      cx={route.start.x}
-                      cy={route.start.y}
-                      r="6"
-                      onPointerDown={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        setEdgeSegmentDrag(null);
-                        setEdgeAnchorDrag({ edgeId: edge.id, endpoint: "from", nodeId: edge.from });
-                      }}
-                    />
-                    <circle
-                      className="eraser-edge-anchor-dot"
-                      cx={route.end.x}
-                      cy={route.end.y}
-                      r="6"
-                      onPointerDown={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        setEdgeSegmentDrag(null);
-                        setEdgeAnchorDrag({ edgeId: edge.id, endpoint: "to", nodeId: edge.to });
-                      }}
-                    />
+                    )) : null}
+                    {canDragAnchors ? (
+                      <>
+                        <circle
+                          className="eraser-edge-anchor-dot"
+                          cx={route.start.x}
+                          cy={route.start.y}
+                          r="6"
+                          onPointerDown={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            setEdgeSegmentDrag(null);
+                            setEdgeAnchorDrag({ edgeId: edge.id, endpoint: "from", nodeId: edge.from });
+                          }}
+                        />
+                        <circle
+                          className="eraser-edge-anchor-dot"
+                          cx={route.end.x}
+                          cy={route.end.y}
+                          r="6"
+                          onPointerDown={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            setEdgeSegmentDrag(null);
+                            setEdgeAnchorDrag({ edgeId: edge.id, endpoint: "to", nodeId: edge.to });
+                          }}
+                        />
+                      </>
+                    ) : null}
                   </>
                 ) : null}
               </g>

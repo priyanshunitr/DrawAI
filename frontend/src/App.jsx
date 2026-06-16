@@ -1247,8 +1247,53 @@ Export worker -> Object storage: store artifact`;
   }
 
   function fitCanvasView() {
+    const viewport = document.querySelector(".eraser-canvas-viewport");
+    if (!viewport) {
+      setZoom(100);
+      return;
+    }
+
+    if (!flowNodes.length) {
+      setZoom(100);
+      viewport.scrollTo({ left: 260, top: 0, behavior: "smooth" });
+      return;
+    }
+
+    const bounds = flowNodes.reduce((acc, node) => {
+      const x1 = node.x;
+      const y1 = node.y;
+      const x2 = node.x + node.w;
+      const y2 = node.y + node.h;
+      if (!acc) {
+        return { minX: x1, minY: y1, maxX: x2, maxY: y2 };
+      }
+      return {
+        minX: Math.min(acc.minX, x1),
+        minY: Math.min(acc.minY, y1),
+        maxX: Math.max(acc.maxX, x2),
+        maxY: Math.max(acc.maxY, y2)
+      };
+    }, null);
+
+    if (!bounds) {
+      setZoom(100);
+      viewport.scrollTo({ left: 260, top: 0, behavior: "smooth" });
+      return;
+    }
+
+    const width = bounds.maxX - bounds.minX;
+    const height = bounds.maxY - bounds.minY;
+    const targetX = Math.max(0, Math.round(bounds.minX - width * 0.2));
+    const targetY = Math.max(0, Math.round(bounds.minY - height * 0.2));
+
     setZoom(100);
-    document.querySelector(".eraser-canvas-viewport")?.scrollTo({ left: 260, top: 0, behavior: "smooth" });
+    window.setTimeout(() => {
+      viewport.scrollTo({
+        left: targetX,
+        top: targetY,
+        behavior: "smooth"
+      });
+    }, 0);
   }
 
   function applyGeneratedDiagram(nextDsl) {
@@ -1610,10 +1655,21 @@ function EraserFlowCanvas({
 
     function handlePointerMove(event) {
       const scale = zoom / 100;
+      let dx = (event.clientX - drag.startX) / scale;
+      let dy = (event.clientY - drag.startY) / scale;
+
+      if (event.shiftKey) {
+        if (Math.abs(event.clientX - drag.startX) > Math.abs(event.clientY - drag.startY)) {
+          dy = 0;
+        } else {
+          dx = 0;
+        }
+      }
+
       setFlowNodes((items) => items.map((item) => item.id === drag.id ? {
         ...item,
-        x: Math.round(drag.nodeX + (event.clientX - drag.startX) / scale),
-        y: Math.round(drag.nodeY + (event.clientY - drag.startY) / scale)
+        x: Math.round(drag.nodeX + dx),
+        y: Math.round(drag.nodeY + dy)
       } : item));
     }
 
@@ -1780,7 +1836,23 @@ function EraserFlowCanvas({
   }
 
   function zoomWithWheel(event) {
-    if (!event.ctrlKey && !event.metaKey) return;
+    const viewport = viewportRef.current;
+
+    if (!viewport) return;
+
+    if (event.shiftKey && !event.ctrlKey && !event.metaKey) {
+      event.preventDefault();
+      viewport.scrollLeft += event.deltaY;
+      return;
+    }
+
+    if (!event.ctrlKey && !event.metaKey) {
+      if (event.deltaX === 0) return;
+      event.preventDefault();
+      viewport.scrollLeft += event.deltaX;
+      return;
+    }
+
     event.preventDefault();
     setZoom((value) => Math.min(180, Math.max(40, value + (event.deltaY < 0 ? 10 : -10))));
   }

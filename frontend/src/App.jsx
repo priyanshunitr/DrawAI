@@ -153,6 +153,36 @@ const aiActions = ["Simplify", "Expand", "Restyle", "Rename nodes", "Add service
 const editorStates = ["Normal", "Loading", "Offline", "Permission denied", "Error"];
 const workspaceStorageKey = "drawai:workspace";
 const edgeSnapDistance = 12;
+const nodeToneOptions = [
+  { id: "dark", label: "Dark" },
+  { id: "white", label: "White" },
+  { id: "olive", label: "Olive" }
+];
+const nodeShapeOptions = [
+  { id: "oval", label: "Round" },
+  { id: "rect", label: "Rectangle" },
+  { id: "diamond", label: "Diamond" },
+  { id: "text", label: "Text" },
+  { id: "note", label: "Note" },
+  { id: "frame", label: "Frame" }
+];
+const nodeSizeOptions = [
+  { id: "small", label: "Small", w: 140, h: 70 },
+  { id: "medium", label: "Medium", w: 180, h: 96 },
+  { id: "large", label: "Large", w: 230, h: 118 }
+];
+const edgeToneOptions = [
+  { id: "default", label: "Default", color: "#d8d8d8" },
+  { id: "blue", label: "Blue", color: "#2f90ff" },
+  { id: "green", label: "Green", color: "#60ef80" },
+  { id: "olive", label: "Olive", color: "#e3ef8c" },
+  { id: "white", label: "White", color: "#f0f0f0" }
+];
+const edgeWidthOptions = [
+  { id: "thin", label: "Thin", width: 1.5 },
+  { id: "medium", label: "Medium", width: 2 },
+  { id: "thick", label: "Thick", width: 3.5 }
+];
 const mcpExampleArguments = {
   "workspace.bootstrap": {},
   "files.list": {},
@@ -282,6 +312,55 @@ function cloneFlowEdges(edges) {
   return edges.map((edge) => ({ ...edge }));
 }
 
+function nodeShape(node) {
+  if (!node) return "oval";
+  if (node.shape) return node.shape;
+  if (["white", "olive"].includes(node.kind)) return "oval";
+  if (node.kind === "round") return "oval";
+  return node.kind ?? "oval";
+}
+
+function nodeTone(node) {
+  if (!node) return "dark";
+  if (node.tone) return node.tone;
+  if (node.kind === "white" || node.kind === "olive") return node.kind;
+  if (node.kind === "note") return "note";
+  return "dark";
+}
+
+function edgeTone(edge) {
+  return edge?.tone ?? "default";
+}
+
+function edgeColor(edge, selected = false) {
+  const tone = edgeToneOptions.find((option) => option.id === edgeTone(edge));
+  if (selected && !edge?.tone) return "#2f90ff";
+  return tone?.color ?? "#d8d8d8";
+}
+
+function edgeMarkerId(edge, selected = false) {
+  if (selected && !edge?.tone) return "eraser-arrow-selected";
+  return `eraser-arrow-${edgeTone(edge)}`;
+}
+
+function edgeWidth(edge) {
+  return Number(edge?.strokeWidth ?? 2);
+}
+
+function nodeSizeValue(node) {
+  if (!node) return "medium";
+  if (node.w <= 150) return "small";
+  if (node.w <= 205) return "medium";
+  return "large";
+}
+
+function edgeWidthValue(edge) {
+  const width = edgeWidth(edge);
+  return edgeWidthOptions
+    .slice()
+    .sort((left, right) => Math.abs(left.width - width) - Math.abs(right.width - width))[0]?.id ?? "medium";
+}
+
 function createDefaultFlowNodes() {
   return [
     { id: "recording", label: "Recording starts", kind: "oval", icon: "mic", x: 50, y: 210, w: 170, h: 88 },
@@ -344,6 +423,8 @@ function createFlowNodeFromTool(tool, point, overrides = {}) {
     id: `node-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     label: labelByTool[tool] ?? "New step",
     kind,
+    shape: kind,
+    tone: kind === "note" ? "note" : "dark",
     icon: iconByTool[tool] ?? "file",
     x: Math.round(point.x),
     y: Math.round(point.y),
@@ -362,9 +443,11 @@ function createFlowDslFromNodes(nodes) {
 function buildFlowSvg(nodes, title = "Flowchart") {
   const text = (value) => String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const nodeMarkup = nodes.map((node) => {
-    const rx = node.kind === "rect" ? 8 : 48;
-    const fill = node.kind === "olive" ? "#5b5c2c" : node.kind === "white" ? "#202020" : "#242a31";
-    const stroke = node.kind === "olive" ? "#e3ef8c" : node.kind === "white" ? "#f0f0f0" : "#60ef80";
+    const shape = nodeShape(node);
+    const tone = nodeTone(node);
+    const rx = shape === "rect" || shape === "diamond" || shape === "note" ? 8 : 48;
+    const fill = tone === "olive" ? "#5b5c2c" : tone === "white" ? "#202020" : tone === "note" ? "#f2d366" : "#242a31";
+    const stroke = tone === "olive" ? "#e3ef8c" : tone === "white" ? "#f0f0f0" : tone === "note" ? "#f2d366" : "#60ef80";
     const lines = node.label.split("\n").map((line, index) => (
       `<text x="${node.x + node.w / 2}" y="${node.y + node.h / 2 + (index * 22) - ((node.label.split("\n").length - 1) * 11)}" text-anchor="middle">${text(line)}</text>`
     )).join("");
@@ -942,6 +1025,7 @@ function EditorView({ file, updateWorkspaceFile }) {
   const [zoom, setZoom] = useState(Number(persisted.zoom ?? 92));
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [selectedNode, setSelectedNode] = useState((persisted.flowNodes ?? createDefaultFlowNodes())[0]?.id ?? "recording");
+  const [selectedEdge, setSelectedEdge] = useState(null);
   const [autosave, setAutosave] = useState("Saved");
   const [commandOpen, setCommandOpen] = useState(false);
   const [state, setState] = useState("Normal");
@@ -961,12 +1045,21 @@ function EditorView({ file, updateWorkspaceFile }) {
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [findText, setFindText] = useState("");
   const historyRef = useRef({ past: [], future: [], last: null, applying: false });
+  const [historyState, setHistoryState] = useState({ past: 0, future: 0 });
   const clipboardNodeRef = useRef(null);
+  const appliedSelectionLinkRef = useRef(null);
   const diagram = useMemo(() => parseDiagramDsl(diagramDsl), [diagramDsl]);
   const nodes = useMemo(() => diagramLayout(diagram.nodes), [diagram.nodes]);
   const blocks = useMemo(() => markdownToBlocks(markdown), [markdown]);
   const credits = estimateAiCredits(aiPrompt, "generate");
   const selectedFlowNode = flowNodes.find((node) => node.id === selectedNode) ?? null;
+  const selectedFlowEdge = flowEdges.find((edge) => edge.id === selectedEdge) ?? null;
+  const selectionType = selectedFlowNode ? "node" : selectedFlowEdge ? "edge" : null;
+  const selectedLabel = selectedFlowNode?.label.replace(/\n/g, " ") ?? selectedFlowEdge?.label ?? "";
+  const selectedStyleValue = selectedFlowNode ? nodeTone(selectedFlowNode) : selectedFlowEdge ? edgeTone(selectedFlowEdge) : "";
+  const selectedShapeValue = selectedFlowNode ? nodeShape(selectedFlowNode) : "";
+  const selectedSizeValue = selectedFlowNode ? nodeSizeValue(selectedFlowNode) : selectedFlowEdge ? edgeWidthValue(selectedFlowEdge) : "";
+  const sizeOptions = selectedFlowEdge ? edgeWidthOptions : nodeSizeOptions;
 
   useEffect(() => {
     const nextStorageKey = `drawai:${file.id}`;
@@ -979,7 +1072,9 @@ function EditorView({ file, updateWorkspaceFile }) {
     setFlowNodes(nextNodes);
     setFlowEdges(nextEdges);
     historyRef.current = { past: [], future: [], last: JSON.stringify({ nodes: nextNodes, edges: nextEdges }), applying: false };
+    setHistoryState({ past: 0, future: 0 });
     setSelectedNode(nextNodes[0]?.id ?? "recording");
+    setSelectedEdge(null);
     setZoom(Number(nextPersisted.zoom ?? 92));
     setActivePanel("canvas");
   }, [file.id, file.title, file.markdown, file.diagramDsl]);
@@ -1001,17 +1096,49 @@ function EditorView({ file, updateWorkspaceFile }) {
   }, [dataComments, file.id]);
 
   useEffect(() => {
+    if (selectedEdge && !flowEdges.some((edge) => edge.id === selectedEdge)) {
+      setSelectedEdge(null);
+    }
+  }, [flowEdges, selectedEdge]);
+
+  useEffect(() => {
+    if (selectedNode && !flowNodes.some((node) => node.id === selectedNode)) {
+      setSelectedNode(flowNodes[0]?.id ?? null);
+    }
+  }, [flowNodes, selectedNode]);
+
+  useEffect(() => {
+    const selection = new URLSearchParams(window.location.search).get("selection");
+    if (!selection || appliedSelectionLinkRef.current === `${file.id}:${selection}`) return;
+
+    const [type, id] = selection.split(":");
+    if (type === "node" && flowNodes.some((node) => node.id === id)) {
+      setSelectedNode(id);
+      setSelectedEdge(null);
+      appliedSelectionLinkRef.current = `${file.id}:${selection}`;
+    }
+
+    if (type === "edge" && flowEdges.some((edge) => edge.id === id)) {
+      setSelectedEdge(id);
+      setSelectedNode(null);
+      appliedSelectionLinkRef.current = `${file.id}:${selection}`;
+    }
+  }, [file.id, flowEdges, flowNodes]);
+
+  useEffect(() => {
     const snapshot = JSON.stringify({ nodes: flowNodes, edges: flowEdges });
     const history = historyRef.current;
 
     if (history.last === null) {
       history.last = snapshot;
+      setHistoryState({ past: history.past.length, future: history.future.length });
       return;
     }
 
     if (history.applying) {
       history.last = snapshot;
       history.applying = false;
+      setHistoryState({ past: history.past.length, future: history.future.length });
       return;
     }
 
@@ -1019,6 +1146,7 @@ function EditorView({ file, updateWorkspaceFile }) {
       history.past = [...history.past, JSON.parse(history.last)].slice(-80);
       history.future = [];
       history.last = snapshot;
+      setHistoryState({ past: history.past.length, future: history.future.length });
     }
   }, [flowNodes, flowEdges]);
 
@@ -1058,6 +1186,12 @@ function EditorView({ file, updateWorkspaceFile }) {
         return;
       }
 
+      if (withCommand && key === "c" && selectedFlowEdge) {
+        event.preventDefault();
+        copySelectionLink();
+        return;
+      }
+
       if (withCommand && key === "v" && clipboardNodeRef.current) {
         event.preventDefault();
         const pasted = {
@@ -1069,6 +1203,7 @@ function EditorView({ file, updateWorkspaceFile }) {
         };
         setFlowNodes((items) => [...items, pasted]);
         setSelectedNode(pasted.id);
+        setSelectedEdge(null);
         return;
       }
 
@@ -1099,7 +1234,7 @@ function EditorView({ file, updateWorkspaceFile }) {
       }
       if (key === "backspace" || key === "delete") {
         event.preventDefault();
-        deleteSelectedNode();
+        deleteSelectedObject();
       }
       if (selectedFlowNode && ["arrowup", "arrowdown", "arrowleft", "arrowright"].includes(key)) {
         event.preventDefault();
@@ -1124,6 +1259,7 @@ function EditorView({ file, updateWorkspaceFile }) {
           setActivePanel("canvas");
         } else {
           setSelectedNode(null);
+          setSelectedEdge(null);
         }
       }
 
@@ -1145,7 +1281,7 @@ function EditorView({ file, updateWorkspaceFile }) {
 
     window.addEventListener("keydown", handleKeydown);
     return () => window.removeEventListener("keydown", handleKeydown);
-  }, [activePanel, commandOpen, flowNodes, selectedFlowNode, shareOpen, versionsOpen]);
+  }, [activePanel, commandOpen, flowNodes, selectedFlowEdge, selectedFlowNode, shareOpen, versionsOpen]);
 
   function runAi() {
     setAiState("streaming");
@@ -1197,6 +1333,7 @@ Export worker -> Object storage: store artifact`;
       setFlowEdges((items) => [...items, { id: `edge-${selectedFlowNode.id}-${node.id}`, from: selectedFlowNode.id, to: node.id, label: "" }]);
     }
     setSelectedNode(node.id);
+    setSelectedEdge(null);
     setDiagramDsl((value) => `${value}\n${selectedFlowNode?.label.replace(/\n/g, " ") ?? "Start"} -> ${node.label}: next`);
   }
 
@@ -1204,11 +1341,36 @@ Export worker -> Object storage: store artifact`;
     setFlowNodes((items) => items.map((item) => item.id === nodeId ? { ...item, ...patch } : item));
   }
 
+  function updateFlowEdge(edgeId, patch) {
+    setFlowEdges((items) => items.map((item) => item.id === edgeId ? { ...item, ...patch } : item));
+  }
+
+  function updateSelectedLabel(value) {
+    if (selectedFlowNode) {
+      updateFlowNode(selectedFlowNode.id, { label: value });
+      return;
+    }
+    if (selectedFlowEdge) {
+      updateFlowEdge(selectedFlowEdge.id, { label: value });
+    }
+  }
+
+  function copySelectionLink() {
+    const selectionId = selectedFlowNode?.id ?? selectedFlowEdge?.id;
+    if (!selectionId || !selectionType) return;
+    const url = new URL(window.location.href);
+    url.searchParams.set("selection", `${selectionType}:${selectionId}`);
+    navigator.clipboard?.writeText(url.toString());
+    setAutosave("Link copied");
+    window.setTimeout(() => setAutosave("Saved"), 1200);
+  }
+
   function duplicateSelectedNode() {
     if (!selectedFlowNode) return;
     const copy = { ...selectedFlowNode, id: `node-${Date.now()}`, label: `${selectedFlowNode.label.replace(/\n/g, " ")} copy`, x: selectedFlowNode.x + 36, y: selectedFlowNode.y + 36 };
     setFlowNodes((items) => [...items, copy]);
     setSelectedNode(copy.id);
+    setSelectedEdge(null);
   }
 
   function deleteSelectedNode() {
@@ -1216,6 +1378,16 @@ Export worker -> Object storage: store artifact`;
     setFlowNodes((items) => items.filter((item) => item.id !== selectedFlowNode.id));
     setFlowEdges((items) => items.filter((item) => item.from !== selectedFlowNode.id && item.to !== selectedFlowNode.id));
     setSelectedNode(flowNodes.find((node) => node.id !== selectedFlowNode.id)?.id ?? "recording");
+    setSelectedEdge(null);
+  }
+
+  function deleteSelectedObject() {
+    if (selectedFlowEdge) {
+      setFlowEdges((items) => items.filter((edge) => edge.id !== selectedFlowEdge.id));
+      setSelectedEdge(null);
+      return;
+    }
+    deleteSelectedNode();
   }
 
   function applyFlowHistorySnapshot(snapshot) {
@@ -1225,6 +1397,7 @@ Export worker -> Object storage: store artifact`;
     setFlowNodes(cloneFlowNodes(nextNodes));
     setFlowEdges(cloneFlowEdges(nextEdges));
     setSelectedNode((current) => nextNodes.some((node) => node.id === current) ? current : nextNodes[0]?.id ?? null);
+    setSelectedEdge((current) => nextEdges.some((edge) => edge.id === current) ? current : null);
   }
 
   function undoFlowNodes() {
@@ -1234,6 +1407,7 @@ Export worker -> Object storage: store artifact`;
     const previous = history.past[history.past.length - 1];
     history.past = history.past.slice(0, -1);
     history.future = [current, ...history.future].slice(0, 80);
+    setHistoryState({ past: history.past.length, future: history.future.length });
     applyFlowHistorySnapshot(previous);
   }
 
@@ -1244,6 +1418,7 @@ Export worker -> Object storage: store artifact`;
     const next = history.future[0];
     history.future = history.future.slice(1);
     history.past = [...history.past, current].slice(-80);
+    setHistoryState({ past: history.past.length, future: history.future.length });
     applyFlowHistorySnapshot(next);
   }
 
@@ -1318,33 +1493,49 @@ Export worker -> Object storage: store artifact`;
         label: ""
       })));
       setSelectedNode(generatedNodes[0].id);
+      setSelectedEdge(null);
     }
   }
 
-  function cycleSelectedShape() {
+  function setSelectedShape(shape) {
     if (!selectedFlowNode) return;
-    const order = ["rect", "oval", "diamond", "text", "note"];
-    const nextKind = order[(order.indexOf(selectedFlowNode.kind) + 1) % order.length] ?? "rect";
-    updateFlowNode(selectedFlowNode.id, { kind: nextKind });
+    const currentTone = nodeTone(selectedFlowNode);
+    updateFlowNode(selectedFlowNode.id, {
+      kind: shape,
+      shape,
+      tone: shape === "note" ? "note" : currentTone === "note" ? "dark" : currentTone
+    });
   }
 
-  function cycleSelectedTone() {
-    if (!selectedFlowNode) return;
-    const order = ["rect", "white", "olive", "note"];
-    const nextKind = order[(order.indexOf(selectedFlowNode.kind) + 1) % order.length] ?? "white";
-    updateFlowNode(selectedFlowNode.id, { kind: nextKind });
+  function setSelectedStyle(tone) {
+    if (selectedFlowNode) {
+      const shape = nodeShape(selectedFlowNode);
+      updateFlowNode(selectedFlowNode.id, {
+        kind: shape,
+        shape,
+        tone
+      });
+      return;
+    }
+
+    if (selectedFlowEdge) {
+      updateFlowEdge(selectedFlowEdge.id, { tone });
+    }
   }
 
-  function cycleSelectedSize() {
-    if (!selectedFlowNode) return;
-    const sizes = [
-      { w: 140, h: 70, label: "Small" },
-      { w: 180, h: 96, label: "Medium" },
-      { w: 230, h: 118, label: "Large" }
-    ];
-    const currentIndex = sizes.findIndex((size) => selectedFlowNode.w <= size.w);
-    const next = sizes[(currentIndex + 1) % sizes.length] ?? sizes[1];
-    updateFlowNode(selectedFlowNode.id, { w: next.w, h: next.h });
+  function setSelectedSize(size) {
+    if (selectedFlowNode) {
+      const next = nodeSizeOptions.find((option) => option.id === size);
+      if (!next) return;
+      updateFlowNode(selectedFlowNode.id, { w: next.w, h: next.h });
+      return;
+    }
+
+    if (selectedFlowEdge) {
+      const next = edgeWidthOptions.find((option) => option.id === size);
+      if (!next) return;
+      updateFlowEdge(selectedFlowEdge.id, { strokeWidth: next.width });
+    }
   }
 
   function resolveEditorComment(commentId) {
@@ -1418,9 +1609,11 @@ Export worker -> Object storage: store artifact`;
             duplicateSelectedNode={duplicateSelectedNode}
             flowEdges={flowEdges}
             flowNodes={flowNodes}
+            selectedEdge={selectedEdge}
             selectedNode={selectedNode}
             setFlowEdges={setFlowEdges}
             setFlowNodes={setFlowNodes}
+            setSelectedEdge={setSelectedEdge}
             setSelectedNode={setSelectedNode}
             setZoom={setZoom}
             tool={tool}
@@ -1465,37 +1658,80 @@ Export worker -> Object storage: store artifact`;
 
       <div className="eraser-bottom-bar" aria-label="Selection controls">
         <input
-          aria-label="Selected node label"
-          disabled={!selectedFlowNode}
-          value={selectedFlowNode?.label.replace(/\n/g, " ") ?? ""}
-          onChange={(event) => selectedFlowNode ? updateFlowNode(selectedFlowNode.id, { label: event.target.value }) : undefined}
+          aria-label="Selected item label"
+          disabled={!selectionType}
+          value={selectedLabel}
+          onChange={(event) => updateSelectedLabel(event.target.value)}
           placeholder="No selection"
         />
         <span className="eraser-bottom-divider" />
-        <button type="button" title="Copy link" onClick={() => navigator.clipboard?.writeText(`${window.location.href}#${selectedFlowNode?.id ?? ""}`)}>
+        <button type="button" title="Copy selection link" disabled={!selectionType} onClick={copySelectionLink}>
           <Link size={17} />
         </button>
-        <button type="button" title={autosave}>
+        <button
+          type="button"
+          title={!historyState.past && historyState.future ? "Redo" : historyState.future ? "Undo (Shift-click to redo)" : "Undo"}
+          disabled={!historyState.past && !historyState.future}
+          onClick={(event) => {
+            if (event.shiftKey || (!historyState.past && historyState.future)) {
+              redoFlowNodes();
+            } else {
+              undoFlowNodes();
+            }
+          }}
+        >
           <History size={17} />
           <ChevronDown size={10} />
         </button>
-        <button type="button" title="Style" onClick={cycleSelectedTone}>
+        <label className="eraser-bottom-select" title="Style">
           <Diamond size={16} />
+          <select
+            aria-label="Style"
+            disabled={!selectionType}
+            value={selectedStyleValue}
+            onChange={(event) => setSelectedStyle(event.target.value)}
+          >
+            {!selectionType ? <option value="">Style</option> : null}
+            {(selectedFlowEdge ? edgeToneOptions : nodeToneOptions).map((option) => (
+              <option key={option.id} value={option.id}>{option.label}</option>
+            ))}
+          </select>
           <ChevronDown size={10} />
-        </button>
-        <button type="button" title="Shape" onClick={cycleSelectedShape}>
+        </label>
+        <label className="eraser-bottom-select" title="Shape">
           <Square size={16} />
+          <select
+            aria-label="Shape"
+            disabled={!selectedFlowNode}
+            value={selectedShapeValue}
+            onChange={(event) => setSelectedShape(event.target.value)}
+          >
+            {!selectedFlowNode ? <option value="">Shape</option> : null}
+            {nodeShapeOptions.map((option) => (
+              <option key={option.id} value={option.id}>{option.label}</option>
+            ))}
+          </select>
           <ChevronDown size={10} />
-        </button>
-        <button type="button" className="eraser-bottom-size" onClick={cycleSelectedSize}>
-          Small
+        </label>
+        <label className="eraser-bottom-select eraser-bottom-size" title={selectedFlowEdge ? "Line width" : "Size"}>
+          <select
+            aria-label={selectedFlowEdge ? "Line width" : "Size"}
+            disabled={!selectionType}
+            value={selectedSizeValue}
+            onChange={(event) => setSelectedSize(event.target.value)}
+          >
+            {!selectionType ? <option value="">Size</option> : null}
+            {sizeOptions.map((option) => (
+              <option key={option.id} value={option.id}>{option.label}</option>
+            ))}
+          </select>
           <ChevronDown size={10} />
-        </button>
+        </label>
         <span className="eraser-bottom-divider" />
-        <button type="button" title="Duplicate" onClick={duplicateSelectedNode}>
+        <button type="button" title="Duplicate node" disabled={!selectedFlowNode} onClick={duplicateSelectedNode}>
           <Copy size={16} />
         </button>
-        <button type="button" title="Delete" onClick={deleteSelectedNode}>
+        <button type="button" title="Delete selection" disabled={!selectionType} onClick={deleteSelectedObject}>
           <Trash2 size={16} />
         </button>
         <button type="button" title="Export" onClick={() => setActivePanel("exports")}>
@@ -1622,9 +1858,11 @@ function EraserFlowCanvas({
   duplicateSelectedNode,
   flowEdges,
   flowNodes,
+  selectedEdge,
   selectedNode,
   setFlowEdges,
   setFlowNodes,
+  setSelectedEdge,
   setSelectedNode,
   setZoom,
   tool,
@@ -1640,7 +1878,6 @@ function EraserFlowCanvas({
   const [connection, setConnection] = useState(null);
   const [viewportDrag, setViewportDrag] = useState(null);
   const [editingNode, setEditingNode] = useState(null);
-  const [selectedEdge, setSelectedEdge] = useState(null);
   const [editingEdge, setEditingEdge] = useState(null);
   const [edgeAnchorDrag, setEdgeAnchorDrag] = useState(null);
   const [edgeSegmentDrag, setEdgeSegmentDrag] = useState(null);
@@ -1875,7 +2112,7 @@ function EraserFlowCanvas({
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
     };
-  }, [selectedEdge, setFlowEdges]);
+  }, [selectedEdge, setFlowEdges, setSelectedEdge]);
 
   useEffect(() => {
     if (!contextMenu) return undefined;
@@ -2415,9 +2652,11 @@ function EraserFlowCanvas({
 
         <svg className="eraser-flow-lines" viewBox="0 0 1900 1080" aria-hidden="true">
           <defs>
-            <marker id="eraser-arrow" markerHeight="8" markerWidth="8" orient="auto" refX="7" refY="4">
-              <path d="M0,0 L8,4 L0,8 Z" fill="#d8d8d8" />
-            </marker>
+            {edgeToneOptions.map((option) => (
+              <marker id={`eraser-arrow-${option.id}`} key={option.id} markerHeight="8" markerWidth="8" orient="auto" refX="7" refY="4">
+                <path d="M0,0 L8,4 L0,8 Z" fill={option.color} />
+              </marker>
+            ))}
             <marker id="eraser-arrow-selected" markerHeight="8" markerWidth="8" orient="auto" refX="7" refY="4">
               <path d="M0,0 L8,4 L0,8 Z" fill="#2f90ff" />
             </marker>
@@ -2458,7 +2697,8 @@ function EraserFlowCanvas({
                 <path
                   className="eraser-flow-edge-visible"
                   d={route.path}
-                  markerEnd={`url(#${isSelected ? "eraser-arrow-selected" : "eraser-arrow"})`}
+                  markerEnd={`url(#${edgeMarkerId(edge, isSelected)})`}
+                  style={{ stroke: edgeColor(edge, isSelected), strokeWidth: edgeWidth(edge) }}
                 />
                 {editingEdge === edge.id ? (
                   <foreignObject className="eraser-edge-label-editor-wrap" x={route.labelX - 84} y={route.labelY - 18} width="168" height="36">
@@ -2560,7 +2800,7 @@ function EraserFlowCanvas({
 
         {flowNodes.map((node) => (
           <div
-            className={`eraser-flow-node eraser-node-${node.kind} ${selectedNode === node.id ? "is-selected" : ""}`}
+            className={`eraser-flow-node eraser-node-${nodeShape(node)} eraser-node-tone-${nodeTone(node)} ${selectedNode === node.id ? "is-selected" : ""}`}
             data-node-id={node.id}
             key={node.id}
             role="button"

@@ -2291,6 +2291,10 @@ progress::-webkit-progress-value {
   border-radius: 7px;
 }
 
+.eraser-node-oval {
+  border-radius: 50px;
+}
+
 .eraser-node-diamond {
   border-radius: 8px;
   transform: rotate(45deg);
@@ -2327,6 +2331,21 @@ progress::-webkit-progress-value {
   border-radius: 10px;
   background: rgba(35, 66, 66, 0.48);
   box-shadow: none;
+}
+
+.eraser-node-tone-dark:not(.eraser-node-text):not(.eraser-node-note):not(.eraser-node-frame) {
+  border-color: #60ef80;
+  background: #242a31;
+}
+
+.eraser-node-tone-white:not(.eraser-node-text):not(.eraser-node-note):not(.eraser-node-frame) {
+  border-color: #f0f0f0;
+  background: #202020;
+}
+
+.eraser-node-tone-olive:not(.eraser-node-text):not(.eraser-node-note):not(.eraser-node-frame) {
+  border-color: #e3ef8c;
+  background: #5b5c2c;
 }
 
 .eraser-node-white {
@@ -2671,8 +2690,46 @@ progress::-webkit-progress-value {
   background: #282828;
 }
 
+.eraser-bottom-bar button:disabled,
+.eraser-bottom-select:has(select:disabled) {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.eraser-bottom-select {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 30px;
+  min-width: 30px;
+  padding: 0 5px;
+  border-radius: 4px;
+  color: #f1f1f1;
+  background: transparent;
+}
+
+.eraser-bottom-select:hover {
+  background: #282828;
+}
+
+.eraser-bottom-select select {
+  min-width: 58px;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  outline: 0;
+  appearance: none;
+  font: inherit;
+  cursor: pointer;
+}
+
 .eraser-bottom-size {
   padding: 0 8px !important;
+}
+
+.eraser-bottom-size select {
+  min-width: 48px;
 }
 
 .eraser-bottom-divider {

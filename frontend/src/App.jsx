@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   Archive,
@@ -191,6 +191,16 @@ function createLocalFileRecord({ title, kind = "Flowchart", folder = "Unsorted",
 
 function fileDateLabel(file, fallback = "Just now") {
   return file.created ?? file.updated ?? fallback;
+}
+
+function isTextInputTarget(target) {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName.toLowerCase();
+  return tag === "input" || tag === "textarea" || tag === "select" || target.isContentEditable;
+}
+
+function cloneFlowNodes(nodes) {
+  return nodes.map((node) => ({ ...node }));
 }
 
 function createDefaultFlowNodes() {
@@ -817,11 +827,13 @@ function EditorView({ file, updateWorkspaceFile }) {
   const [newComment, setNewComment] = useState("");
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [findText, setFindText] = useState("");
+  const historyRef = useRef({ past: [], future: [], last: null, applying: false });
+  const clipboardNodeRef = useRef(null);
   const diagram = useMemo(() => parseDiagramDsl(diagramDsl), [diagramDsl]);
   const nodes = useMemo(() => diagramLayout(diagram.nodes), [diagram.nodes]);
   const blocks = useMemo(() => markdownToBlocks(markdown), [markdown]);
   const credits = estimateAiCredits(aiPrompt, "generate");
-  const selectedFlowNode = flowNodes.find((node) => node.id === selectedNode) ?? flowNodes[0];
+  const selectedFlowNode = flowNodes.find((node) => node.id === selectedNode) ?? null;
 
   useEffect(() => {
     const nextStorageKey = `drawai:${file.id}`;
@@ -831,6 +843,7 @@ function EditorView({ file, updateWorkspaceFile }) {
     setMarkdown(nextPersisted.markdown ?? file.markdown ?? defaultMarkdown);
     setDiagramDsl(nextPersisted.diagramDsl ?? file.diagramDsl ?? diagramExamples.architecture);
     setFlowNodes(nextNodes);
+    historyRef.current = { past: [], future: [], last: JSON.stringify(nextNodes), applying: false };
     setSelectedNode(nextNodes[0]?.id ?? "recording");
     setZoom(Number(nextPersisted.zoom ?? 92));
     setActivePanel("canvas");
@@ -853,8 +866,77 @@ function EditorView({ file, updateWorkspaceFile }) {
   }, [dataComments, file.id]);
 
   useEffect(() => {
+    const snapshot = JSON.stringify(flowNodes);
+    const history = historyRef.current;
+
+    if (history.last === null) {
+      history.last = snapshot;
+      return;
+    }
+
+    if (history.applying) {
+      history.last = snapshot;
+      history.applying = false;
+      return;
+    }
+
+    if (snapshot !== history.last) {
+      history.past = [...history.past, JSON.parse(history.last)].slice(-80);
+      history.future = [];
+      history.last = snapshot;
+    }
+  }, [flowNodes]);
+
+  useEffect(() => {
     const handleKeydown = (event) => {
       const key = event.key.toLowerCase();
+      const typing = isTextInputTarget(event.target);
+      const withCommand = event.ctrlKey || event.metaKey;
+
+      if (typing) return;
+
+      if (withCommand && key === "z") {
+        event.preventDefault();
+        if (event.shiftKey) {
+          redoFlowNodes();
+        } else {
+          undoFlowNodes();
+        }
+        return;
+      }
+
+      if (withCommand && key === "y") {
+        event.preventDefault();
+        redoFlowNodes();
+        return;
+      }
+
+      if (withCommand && key === "d") {
+        event.preventDefault();
+        duplicateSelectedNode();
+        return;
+      }
+
+      if (withCommand && key === "c" && selectedFlowNode) {
+        event.preventDefault();
+        clipboardNodeRef.current = { ...selectedFlowNode };
+        return;
+      }
+
+      if (withCommand && key === "v" && clipboardNodeRef.current) {
+        event.preventDefault();
+        const pasted = {
+          ...clipboardNodeRef.current,
+          id: `node-${Date.now()}`,
+          label: `${clipboardNodeRef.current.label.replace(/\n/g, " ")} copy`,
+          x: clipboardNodeRef.current.x + 42,
+          y: clipboardNodeRef.current.y + 42
+        };
+        setFlowNodes((items) => [...items, pasted]);
+        setSelectedNode(pasted.id);
+        return;
+      }
+
       if ((event.ctrlKey || event.metaKey) && key === "k") {
         event.preventDefault();
         setCommandOpen((open) => !open);
@@ -871,11 +953,57 @@ function EditorView({ file, updateWorkspaceFile }) {
         event.preventDefault();
         setZoom((value) => Math.max(40, value - 8));
       }
+      if ((event.ctrlKey || event.metaKey) && key === "0") {
+        event.preventDefault();
+        fitCanvasView();
+      }
+      if (key === "backspace" || key === "delete") {
+        event.preventDefault();
+        deleteSelectedNode();
+      }
+      if (selectedFlowNode && ["arrowup", "arrowdown", "arrowleft", "arrowright"].includes(key)) {
+        event.preventDefault();
+        const amount = event.shiftKey ? 24 : 8;
+        const moves = {
+          arrowup: [0, -amount],
+          arrowdown: [0, amount],
+          arrowleft: [-amount, 0],
+          arrowright: [amount, 0]
+        };
+        const [dx, dy] = moves[key];
+        updateFlowNode(selectedFlowNode.id, { x: selectedFlowNode.x + dx, y: selectedFlowNode.y + dy });
+      }
+      if (key === "escape") {
+        if (commandOpen) {
+          setCommandOpen(false);
+        } else if (shareOpen) {
+          setShareOpen(false);
+        } else if (versionsOpen) {
+          setVersionsOpen(false);
+        } else if (activePanel !== "canvas") {
+          setActivePanel("canvas");
+        } else {
+          setSelectedNode(null);
+        }
+      }
+
+      const toolShortcuts = {
+        a: "arrow",
+        l: "line",
+        o: "diamond",
+        r: "rect",
+        t: "text",
+        v: "select"
+      };
+
+      if (!withCommand && toolShortcuts[key]) {
+        setTool(toolShortcuts[key]);
+      }
     };
 
     window.addEventListener("keydown", handleKeydown);
     return () => window.removeEventListener("keydown", handleKeydown);
-  }, []);
+  }, [activePanel, commandOpen, flowNodes, selectedFlowNode, shareOpen, versionsOpen]);
 
   function runAi() {
     setAiState("streaming");
@@ -950,6 +1078,37 @@ Export worker -> Object storage: store artifact`;
     if (!selectedFlowNode || flowNodes.length <= 1) return;
     setFlowNodes((items) => items.filter((item) => item.id !== selectedFlowNode.id));
     setSelectedNode(flowNodes.find((node) => node.id !== selectedFlowNode.id)?.id ?? "recording");
+  }
+
+  function applyFlowHistorySnapshot(snapshot) {
+    historyRef.current.applying = true;
+    setFlowNodes(cloneFlowNodes(snapshot));
+    setSelectedNode((current) => snapshot.some((node) => node.id === current) ? current : snapshot[0]?.id ?? null);
+  }
+
+  function undoFlowNodes() {
+    const history = historyRef.current;
+    if (!history.past.length) return;
+    const current = JSON.parse(history.last ?? JSON.stringify(flowNodes));
+    const previous = history.past[history.past.length - 1];
+    history.past = history.past.slice(0, -1);
+    history.future = [current, ...history.future].slice(0, 80);
+    applyFlowHistorySnapshot(previous);
+  }
+
+  function redoFlowNodes() {
+    const history = historyRef.current;
+    if (!history.future.length) return;
+    const current = JSON.parse(history.last ?? JSON.stringify(flowNodes));
+    const next = history.future[0];
+    history.future = history.future.slice(1);
+    history.past = [...history.past, current].slice(-80);
+    applyFlowHistorySnapshot(next);
+  }
+
+  function fitCanvasView() {
+    setZoom(100);
+    document.querySelector(".eraser-canvas-viewport")?.scrollTo({ left: 260, top: 0, behavior: "smooth" });
   }
 
   function applyGeneratedDiagram(nextDsl) {
@@ -1040,13 +1199,14 @@ Export worker -> Object storage: store artifact`;
             selectedNode={selectedNode}
             setFlowNodes={setFlowNodes}
             setSelectedNode={setSelectedNode}
+            setZoom={setZoom}
             tool={tool}
             updateFlowNode={updateFlowNode}
             zoom={zoom}
           />
           <div className="eraser-zoom-control">
             <button type="button" onClick={() => setZoom((value) => Math.max(40, value - 10))}>-</button>
-            <button type="button" onClick={() => setZoom(100)}>{zoom}%</button>
+            <button type="button" onClick={fitCanvasView}>{zoom}%</button>
             <button type="button" onClick={() => setZoom((value) => Math.min(180, value + 10))}>+</button>
             <ChevronDown size={12} />
           </div>
@@ -1233,9 +1393,21 @@ function EraserCommentsPanel({ addComment, commentList, newComment, resolveComme
   );
 }
 
-function EraserFlowCanvas({ flowNodes, selectedNode, setFlowNodes, setSelectedNode, tool, updateFlowNode, zoom }) {
+function EraserFlowCanvas({ flowNodes, selectedNode, setFlowNodes, setSelectedNode, setZoom, tool, updateFlowNode, zoom }) {
+  const viewportRef = useRef(null);
+  const didInitialScrollRef = useRef(false);
+  const spacePressedRef = useRef(false);
   const [drag, setDrag] = useState(null);
+  const [viewportDrag, setViewportDrag] = useState(null);
   const [editingNode, setEditingNode] = useState(null);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport || didInitialScrollRef.current) return;
+    viewport.scrollLeft = 260;
+    viewport.scrollTop = 0;
+    didInitialScrollRef.current = true;
+  }, []);
 
   useEffect(() => {
     if (!drag) return undefined;
@@ -1261,6 +1433,68 @@ function EraserFlowCanvas({ flowNodes, selectedNode, setFlowNodes, setSelectedNo
     };
   }, [drag, setFlowNodes, zoom]);
 
+  useEffect(() => {
+    if (!viewportDrag) return undefined;
+
+    function handlePointerMove(event) {
+      const viewport = viewportRef.current;
+      if (!viewport) return;
+      viewport.scrollLeft = viewportDrag.scrollLeft - (event.clientX - viewportDrag.startX);
+      viewport.scrollTop = viewportDrag.scrollTop - (event.clientY - viewportDrag.startY);
+    }
+
+    function handlePointerUp() {
+      setViewportDrag(null);
+    }
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [viewportDrag]);
+
+  useEffect(() => {
+    function handleKeyDown(event) {
+      if (event.code === "Space" && !isTextInputTarget(event.target)) {
+        spacePressedRef.current = true;
+      }
+    }
+
+    function handleKeyUp(event) {
+      if (event.code === "Space") {
+        spacePressedRef.current = false;
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+    };
+  }, []);
+
+  function beginViewportPan(event) {
+    if (event.button !== 1 && !(event.button === 0 && spacePressedRef.current)) return;
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    event.preventDefault();
+    setViewportDrag({
+      startX: event.clientX,
+      startY: event.clientY,
+      scrollLeft: viewport.scrollLeft,
+      scrollTop: viewport.scrollTop
+    });
+  }
+
+  function zoomWithWheel(event) {
+    if (!event.ctrlKey && !event.metaKey) return;
+    event.preventDefault();
+    setZoom((value) => Math.min(180, Math.max(40, value + (event.deltaY < 0 ? 10 : -10))));
+  }
+
   function addNodeAt(event) {
     if (!["rect", "diamond", "round", "text", "note"].includes(tool)) return;
     const bounds = event.currentTarget.getBoundingClientRect();
@@ -1280,8 +1514,22 @@ function EraserFlowCanvas({ flowNodes, selectedNode, setFlowNodes, setSelectedNo
   }
 
   return (
-    <div className="eraser-canvas-viewport">
-      <div className="eraser-flow-world" style={{ transform: `scale(${zoom / 100})` }} onDoubleClick={addNodeAt}>
+    <div
+      className={viewportDrag ? "eraser-canvas-viewport is-panning" : "eraser-canvas-viewport"}
+      ref={viewportRef}
+      onAuxClick={(event) => event.preventDefault()}
+      onPointerDown={beginViewportPan}
+      onWheel={zoomWithWheel}
+    >
+      <div className="eraser-flow-scroll-surface">
+        <div
+          className="eraser-flow-world"
+          style={{ transform: `scale(${zoom / 100})` }}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setSelectedNode(null);
+          }}
+          onDoubleClick={addNodeAt}
+        >
         <span className="eraser-diagram-type">Flowchart</span>
         <div className="eraser-outer-lane" />
         <div className="eraser-upload-lane">
@@ -1337,6 +1585,7 @@ function EraserFlowCanvas({ flowNodes, selectedNode, setFlowNodes, setSelectedNo
               updateFlowNode(node.id, { x: node.x + dx, y: node.y + dy });
             }}
             onPointerDown={(event) => {
+              if (event.button !== 0) return;
               setSelectedNode(node.id);
               setDrag({ id: node.id, startX: event.clientX, startY: event.clientY, nodeX: node.x, nodeY: node.y });
             }}
@@ -1367,6 +1616,7 @@ function EraserFlowCanvas({ flowNodes, selectedNode, setFlowNodes, setSelectedNo
             )}
           </div>
         ))}
+        </div>
       </div>
     </div>
   );

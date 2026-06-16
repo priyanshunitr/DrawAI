@@ -1917,9 +1917,19 @@ progress::-webkit-progress-value {
   width: 100%;
   height: calc(100vh - 57px);
   overflow: auto;
-  padding: 145px 0 0 324px;
+  cursor: default;
   scrollbar-color: #393939 #151515;
   scrollbar-width: thin;
+}
+
+.eraser-canvas-viewport.is-panning {
+  cursor: grabbing;
+}
+
+.eraser-flow-scroll-surface {
+  width: 3000px;
+  height: 1700px;
+  padding: 145px 620px 420px 584px;
 }
 
 .eraser-flow-world {

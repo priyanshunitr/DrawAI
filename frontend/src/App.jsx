@@ -1050,16 +1050,6 @@ Export worker -> Object storage: store artifact`;
             <button type="button" onClick={() => setZoom((value) => Math.min(180, value + 10))}>+</button>
             <ChevronDown size={12} />
           </div>
-          {selectedFlowNode ? (
-            <div className="eraser-node-inspector">
-              <label>
-                <span>Selected</span>
-                <input value={selectedFlowNode.label.replace(/\n/g, " ")} onChange={(event) => updateFlowNode(selectedFlowNode.id, { label: event.target.value })} />
-              </label>
-              <button type="button" onClick={duplicateSelectedNode}><Copy size={13} />Duplicate</button>
-              <button type="button" onClick={deleteSelectedNode}><Trash2 size={13} />Delete</button>
-            </div>
-          ) : null}
         </section>
 
         {activePanel === "ai" || activePanel === "code" || activePanel === "exports" || activePanel === "comments" ? (
@@ -1090,10 +1080,44 @@ Export worker -> Object storage: store artifact`;
         ) : null}
       </main>
 
-      <div className="eraser-editor-status">
-        <span>{autosave}</span>
-        <button type="button" onClick={() => setActivePanel("code")}>Code</button>
-        <button type="button" onClick={() => setActivePanel("exports")}>Export</button>
+      <div className="eraser-bottom-bar" aria-label="Selection controls">
+        <input
+          aria-label="Selected node label"
+          disabled={!selectedFlowNode}
+          value={selectedFlowNode?.label.replace(/\n/g, " ") ?? ""}
+          onChange={(event) => selectedFlowNode ? updateFlowNode(selectedFlowNode.id, { label: event.target.value }) : undefined}
+          placeholder="No selection"
+        />
+        <span className="eraser-bottom-divider" />
+        <button type="button" title="Copy link" onClick={() => navigator.clipboard?.writeText(`${window.location.href}#${selectedFlowNode?.id ?? ""}`)}>
+          <Link size={17} />
+        </button>
+        <button type="button" title={autosave}>
+          <History size={17} />
+          <ChevronDown size={10} />
+        </button>
+        <button type="button" title="Style">
+          <Diamond size={16} />
+          <ChevronDown size={10} />
+        </button>
+        <button type="button" title="Shape">
+          <Square size={16} />
+          <ChevronDown size={10} />
+        </button>
+        <button type="button" className="eraser-bottom-size" onClick={() => selectedFlowNode ? updateFlowNode(selectedFlowNode.id, { w: Math.max(120, selectedFlowNode.w - 10), h: Math.max(58, selectedFlowNode.h - 6) }) : undefined}>
+          Small
+          <ChevronDown size={10} />
+        </button>
+        <span className="eraser-bottom-divider" />
+        <button type="button" title="Duplicate" onClick={duplicateSelectedNode}>
+          <Copy size={16} />
+        </button>
+        <button type="button" title="Delete" onClick={deleteSelectedNode}>
+          <Trash2 size={16} />
+        </button>
+        <button type="button" title="Export" onClick={() => setActivePanel("exports")}>
+          <Download size={16} />
+        </button>
       </div>
 
       {commandOpen ? <CommandPalette setActivePanel={setActivePanel} setCommandOpen={setCommandOpen} setZoom={setZoom} /> : null}
@@ -1211,6 +1235,7 @@ function EraserCommentsPanel({ addComment, commentList, newComment, resolveComme
 
 function EraserFlowCanvas({ flowNodes, selectedNode, setFlowNodes, setSelectedNode, tool, updateFlowNode, zoom }) {
   const [drag, setDrag] = useState(null);
+  const [editingNode, setEditingNode] = useState(null);
 
   useEffect(() => {
     if (!drag) return undefined;
@@ -1286,14 +1311,25 @@ function EraserFlowCanvas({ flowNodes, selectedNode, setFlowNodes, setSelectedNo
         </svg>
 
         {flowNodes.map((node) => (
-          <button
+          <div
             className={`eraser-flow-node eraser-node-${node.kind} ${selectedNode === node.id ? "is-selected" : ""}`}
             key={node.id}
+            role="button"
             style={{ left: node.x, top: node.y, width: node.w, height: node.h }}
-            type="button"
+            tabIndex="0"
             onClick={() => setSelectedNode(node.id)}
-            onDoubleClick={(event) => event.stopPropagation()}
+            onDoubleClick={(event) => {
+              event.stopPropagation();
+              setSelectedNode(node.id);
+              setEditingNode(node.id);
+            }}
             onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                setSelectedNode(node.id);
+                setEditingNode(node.id);
+                return;
+              }
               const moves = { ArrowUp: [0, -8], ArrowDown: [0, 8], ArrowLeft: [-8, 0], ArrowRight: [8, 0] };
               if (!moves[event.key]) return;
               event.preventDefault();
@@ -1306,8 +1342,30 @@ function EraserFlowCanvas({ flowNodes, selectedNode, setFlowNodes, setSelectedNo
             }}
           >
             <EraserNodeIcon type={node.icon} />
-            {node.label.split("\n").map((line) => <span key={line}>{line}</span>)}
-          </button>
+            {editingNode === node.id ? (
+              <textarea
+                autoFocus
+                className="eraser-flow-node-editor"
+                value={node.label}
+                onBlur={() => setEditingNode(null)}
+                onChange={(event) => updateFlowNode(node.id, { label: event.target.value })}
+                onClick={(event) => event.stopPropagation()}
+                onDoubleClick={(event) => event.stopPropagation()}
+                onKeyDown={(event) => {
+                  event.stopPropagation();
+                  if (event.key === "Escape" || (event.key === "Enter" && !event.shiftKey)) {
+                    event.preventDefault();
+                    setEditingNode(null);
+                  }
+                }}
+                onPointerDown={(event) => event.stopPropagation()}
+              />
+            ) : (
+              <span className="eraser-flow-node-label">
+                {node.label.split("\n").map((line) => <span key={line}>{line}</span>)}
+              </span>
+            )}
+          </div>
         ))}
       </div>
     </div>

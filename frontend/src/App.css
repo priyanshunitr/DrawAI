@@ -2041,11 +2041,39 @@ progress::-webkit-progress-value {
   font-size: 18px;
   line-height: 1.2;
   text-align: center;
+  user-select: none;
 }
 
 .eraser-flow-node.is-selected {
   outline: 2px solid #2f70ed;
   outline-offset: 2px;
+}
+
+.eraser-flow-node-label {
+  display: grid;
+  justify-items: center;
+  max-width: calc(100% - 22px);
+  pointer-events: none;
+}
+
+.eraser-flow-node-editor {
+  width: calc(100% - 22px);
+  min-height: 56px;
+  max-height: calc(100% - 12px);
+  padding: 4px 6px;
+  border: 0;
+  outline: 0;
+  color: #ffffff;
+  background: transparent;
+  font: inherit;
+  line-height: 1.2;
+  text-align: center;
+  resize: none;
+  user-select: text;
+}
+
+.eraser-flow-node-editor::selection {
+  background: rgba(49, 108, 230, 0.55);
 }
 
 .eraser-node-rect {
@@ -2248,31 +2276,71 @@ progress::-webkit-progress-value {
   box-shadow: -22px 0 45px rgba(0, 0, 0, 0.35);
 }
 
-.eraser-editor-status {
+.eraser-bottom-bar {
   position: fixed;
-  right: 18px;
-  bottom: 16px;
+  left: 50%;
+  bottom: 18px;
   z-index: 9;
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 6px;
-  border: 1px solid #333333;
-  border-radius: 6px;
-  color: #a9a9a9;
-  background: #191919;
-  font-size: 11px;
+  gap: 8px;
+  min-height: 42px;
+  padding: 5px 8px;
+  transform: translateX(-50%);
+  border: 1px solid #3a3a3a;
+  border-radius: 5px;
+  color: #ffffff;
+  background: #1a1a1a;
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.36);
+  font-size: 12px;
   font-weight: 900;
 }
 
-.eraser-editor-status button {
-  height: 25px;
-  border: 1px solid #3d3d3d;
+.eraser-bottom-bar input {
+  width: 201px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid #585858;
   border-radius: 4px;
   color: #ffffff;
-  background: #1f1f1f;
-  font-size: 11px;
+  background: #171717;
+  outline: 0;
+  font-size: 12px;
   font-weight: 900;
+}
+
+.eraser-bottom-bar input:disabled {
+  opacity: 0.6;
+}
+
+.eraser-bottom-bar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 30px;
+  min-width: 30px;
+  padding: 0 5px;
+  border: 0;
+  border-radius: 4px;
+  color: #f1f1f1;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.eraser-bottom-bar button:hover {
+  background: #282828;
+}
+
+.eraser-bottom-size {
+  padding: 0 8px !important;
+}
+
+.eraser-bottom-divider {
+  width: 1px;
+  height: 26px;
+  background: #393939;
 }
 
 .eraser-editor .state-banner {

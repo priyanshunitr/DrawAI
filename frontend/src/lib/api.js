@@ -173,3 +173,36 @@ export async function createExport(fileId, format) {
   const payload = await response.json();
   return payload.data;
 }
+
+export async function fetchMcpTools() {
+  const response = await fetch(`${API_BASE_URL}/mcp/tools`, {
+    headers: {
+      Accept: "application/json"
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`MCP tools failed: ${response.status}`);
+  }
+
+  const payload = await response.json();
+  return payload.data;
+}
+
+export async function callMcpTool(tool, args = {}) {
+  const response = await fetch(`${API_BASE_URL}/mcp/call`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ tool, arguments: args })
+  });
+
+  const payload = await response.json();
+
+  if (!response.ok) {
+    throw new Error(payload.error?.message ?? `MCP call failed: ${response.status}`);
+  }
+
+  return payload.data;
+}

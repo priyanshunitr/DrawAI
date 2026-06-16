@@ -84,12 +84,14 @@ import {
   markdownToBlocks
 } from "./lib/editor.js";
 import {
+  callMcpTool,
   createComment,
   createExport,
   createFile as createFileRequest,
   createShare,
   deleteFile as deleteFileRequest,
   fetchBootstrap,
+  fetchMcpTools,
   generateDiagram,
   resolveComment as resolveCommentRequest,
   restoreFile as restoreFileRequest,
@@ -150,10 +152,82 @@ const aiTemplates = ["Architecture", "Sequence", "Flowchart", "ERD", "API flow",
 const aiActions = ["Simplify", "Expand", "Restyle", "Rename nodes", "Add service", "Convert type", "Explain"];
 const editorStates = ["Normal", "Loading", "Offline", "Permission denied", "Error"];
 const workspaceStorageKey = "drawai:workspace";
+const mcpExampleArguments = {
+  "workspace.bootstrap": {},
+  "files.list": {},
+  "files.read": { fileId: "auth-architecture" },
+  "files.create": { title: "New MCP file", kind: "Diagram", folder: "Architecture" },
+  "files.update": { fileId: "auth-architecture", title: "Auth architecture" },
+  "files.delete": { fileId: "api-rate-limits" },
+  "files.restore": { fileId: "api-rate-limits" },
+  "files.share": { fileId: "auth-architecture", role: "viewer" },
+  "diagrams.examples": {},
+  "diagrams.parse": { source: "diagram flowchart\nClient -> API: request" },
+  "diagrams.layout": { source: "diagram flowchart\nClient -> API: request\nAPI -> DB: read" },
+  "diagrams.quickFix": { source: "diagram flowchart\nClient => API: request" },
+  "diagrams.convert": { source: "diagram flowchart\nClient -> API: request", targetType: "sequence" },
+  "diagrams.create": { title: "MCP flow", source: "diagram flowchart\nStart -> Done: complete" },
+  "diagrams.update": { fileId: "auth-architecture", source: "diagram flowchart\nClient -> API: request" },
+  "ai.diagrams.generate": { prompt: "Show signup, auth, workspace lookup, and export permission checks.", diagramType: "flowchart" },
+  "ai.diagrams.edit": { source: "diagram flowchart\nClient -> API: request", action: "Add audit logging" },
+  "ai.diagrams.explain": { source: "diagram flowchart\nClient -> API: request" },
+  "comments.list": { fileId: "auth-architecture" },
+  "comments.create": { fileId: "auth-architecture", text: "Review MCP command coverage.", target: "File" },
+  "comments.resolve": { commentId: "c1" },
+  "versions.list": { fileId: "auth-architecture" },
+  "versions.create": { fileId: "auth-architecture", label: "MCP checkpoint" },
+  "versions.restore": { fileId: "auth-architecture", versionId: "v1" },
+  "exports.create": { fileId: "auth-architecture", format: "PNG" },
+  "exports.status": { exportId: "exp_1" },
+  "exports.cancel": { exportId: "exp_1" },
+  "integrations.list": {},
+  "integrations.reconnect": { integrationId: "github" },
+  "git.commit": { fileId: "auth-architecture", message: "Update diagram", branch: "main" },
+  "git.conflicts.resolve": { fileId: "auth-architecture", strategy: "ours" },
+  "apiKeys.list": {},
+  "apiKeys.create": { name: "Agent key", scope: "files:read diagrams:write" },
+  "apiKeys.revoke": { keyId: "key_1" },
+  "webhooks.create": { url: "https://example.com/webhook", events: ["file.updated"] }
+};
+const fallbackMcpTools = Object.keys(mcpExampleArguments).map((name) => ({
+  name,
+  title: humanizeMcpName(name),
+  category: name.split(".")[0] ?? "mcp",
+  description: "MCP command"
+}));
 
 function slugify(value) {
   const slug = value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
   return slug || `file-${Date.now()}`;
+}
+
+function normalizeMcpTools(tools) {
+  if (!Array.isArray(tools) || tools.length === 0) return fallbackMcpTools;
+  return tools.map((tool) => {
+    if (typeof tool === "string") {
+      return { name: tool, title: tool, category: tool.split(".")[0] ?? "mcp", description: "MCP command" };
+    }
+    return {
+      name: tool.name,
+      title: tool.title ?? tool.name,
+      category: tool.category ?? tool.name?.split(".")[0] ?? "mcp",
+      description: tool.description ?? "MCP command",
+      inputSchema: tool.inputSchema
+    };
+  }).filter((tool) => tool.name);
+}
+
+function prettyJson(value) {
+  return JSON.stringify(value, null, 2);
+}
+
+function humanizeMcpName(name) {
+  return name
+    .split(".")
+    .slice(-1)[0]
+    .replace(/([A-Z])/g, " $1")
+    .replace(/-/g, " ")
+    .replace(/^./, (letter) => letter.toUpperCase());
 }
 
 function readJsonStorage(key, fallback = null) {
@@ -203,6 +277,10 @@ function cloneFlowNodes(nodes) {
   return nodes.map((node) => ({ ...node }));
 }
 
+function cloneFlowEdges(edges) {
+  return edges.map((edge) => ({ ...edge }));
+}
+
 function createDefaultFlowNodes() {
   return [
     { id: "recording", label: "Recording starts", kind: "oval", icon: "mic", x: 50, y: 210, w: 170, h: 88 },
@@ -219,6 +297,59 @@ function createDefaultFlowNodes() {
     { id: "store", label: "Store chunks\nand vectors", kind: "oval", icon: "db", x: 1030, y: 800, w: 190, h: 102 },
     { id: "ready", label: "Ready for chat", kind: "olive", icon: "chat", x: 1530, y: 810, w: 190, h: 102 }
   ];
+}
+
+function createDefaultFlowEdges() {
+  return [
+    { id: "edge-recording-create", from: "recording", to: "create", label: "" },
+    { id: "edge-create-request", from: "create", to: "request", label: "" },
+    { id: "edge-request-signed", from: "request", to: "signed", label: "" },
+    { id: "edge-signed-upload", from: "signed", to: "upload", label: "" },
+    { id: "edge-upload-complete", from: "upload", to: "complete", label: "" },
+    { id: "edge-complete-db", from: "complete", to: "db", label: "" },
+    { id: "edge-job-worker", from: "job", to: "worker", label: "" },
+    { id: "edge-worker-transcribe", from: "worker", to: "transcribe", label: "" },
+    { id: "edge-transcribe-embed", from: "transcribe", to: "embed", label: "" },
+    { id: "edge-embed-store", from: "embed", to: "store", label: "" },
+    { id: "edge-store-ready", from: "store", to: "ready", label: "" }
+  ];
+}
+
+function createFlowNodeFromTool(tool, point, overrides = {}) {
+  const kindByTool = {
+    diamond: "diamond",
+    frame: "frame",
+    note: "note",
+    round: "oval",
+    text: "text"
+  };
+  const labelByTool = {
+    diamond: "Decision",
+    frame: "Frame",
+    note: "Note",
+    text: "Text"
+  };
+  const iconByTool = {
+    diamond: "spark",
+    frame: "box",
+    note: "task",
+    text: "task"
+  };
+  const kind = kindByTool[tool] ?? "rect";
+  const isText = kind === "text";
+  const isFrame = kind === "frame";
+
+  return {
+    id: `node-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    label: labelByTool[tool] ?? "New step",
+    kind,
+    icon: iconByTool[tool] ?? "file",
+    x: Math.round(point.x),
+    y: Math.round(point.y),
+    w: isFrame ? 260 : isText ? 170 : 180,
+    h: isFrame ? 150 : isText ? 68 : 96,
+    ...overrides
+  };
 }
 
 function createFlowDslFromNodes(nodes) {
@@ -804,6 +935,7 @@ function EditorView({ file, updateWorkspaceFile }) {
   const [markdown, setMarkdown] = useState(persisted.markdown ?? file.markdown ?? defaultMarkdown);
   const [diagramDsl, setDiagramDsl] = useState(persisted.diagramDsl ?? file.diagramDsl ?? diagramExamples.architecture);
   const [flowNodes, setFlowNodes] = useState(persisted.flowNodes ?? createDefaultFlowNodes());
+  const [flowEdges, setFlowEdges] = useState(persisted.flowEdges ?? createDefaultFlowEdges());
   const [activePanel, setActivePanel] = useState("canvas");
   const [tool, setTool] = useState("select");
   const [zoom, setZoom] = useState(Number(persisted.zoom ?? 92));
@@ -839,11 +971,13 @@ function EditorView({ file, updateWorkspaceFile }) {
     const nextStorageKey = `drawai:${file.id}`;
     const nextPersisted = readStorage(nextStorageKey);
     const nextNodes = nextPersisted.flowNodes ?? createDefaultFlowNodes();
+    const nextEdges = nextPersisted.flowEdges ?? createDefaultFlowEdges();
     setTitle(nextPersisted.title ?? file.title);
     setMarkdown(nextPersisted.markdown ?? file.markdown ?? defaultMarkdown);
     setDiagramDsl(nextPersisted.diagramDsl ?? file.diagramDsl ?? diagramExamples.architecture);
     setFlowNodes(nextNodes);
-    historyRef.current = { past: [], future: [], last: JSON.stringify(nextNodes), applying: false };
+    setFlowEdges(nextEdges);
+    historyRef.current = { past: [], future: [], last: JSON.stringify({ nodes: nextNodes, edges: nextEdges }), applying: false };
     setSelectedNode(nextNodes[0]?.id ?? "recording");
     setZoom(Number(nextPersisted.zoom ?? 92));
     setActivePanel("canvas");
@@ -852,21 +986,21 @@ function EditorView({ file, updateWorkspaceFile }) {
   useEffect(() => {
     setAutosave("Saving");
     const timer = window.setTimeout(() => {
-      localStorage.setItem(storageKey, JSON.stringify({ title, markdown, diagramDsl, zoom, flowNodes }));
+      localStorage.setItem(storageKey, JSON.stringify({ title, markdown, diagramDsl, zoom, flowNodes, flowEdges }));
       updateWorkspaceFile?.(file.id, { title, markdown, diagramDsl });
       saveFile(file.id, { title, markdown, diagramDsl, contentVersion: 1 }).catch(() => undefined);
       setAutosave("Saved");
     }, 450);
 
     return () => window.clearTimeout(timer);
-  }, [storageKey, file.id, title, markdown, diagramDsl, zoom, flowNodes]);
+  }, [storageKey, file.id, title, markdown, diagramDsl, zoom, flowNodes, flowEdges]);
 
   useEffect(() => {
     setCommentList(dataComments.filter((comment) => comment.fileId === file.id || !comment.fileId));
   }, [dataComments, file.id]);
 
   useEffect(() => {
-    const snapshot = JSON.stringify(flowNodes);
+    const snapshot = JSON.stringify({ nodes: flowNodes, edges: flowEdges });
     const history = historyRef.current;
 
     if (history.last === null) {
@@ -885,7 +1019,7 @@ function EditorView({ file, updateWorkspaceFile }) {
       history.future = [];
       history.last = snapshot;
     }
-  }, [flowNodes]);
+  }, [flowNodes, flowEdges]);
 
   useEffect(() => {
     const handleKeydown = (event) => {
@@ -941,6 +1075,11 @@ function EditorView({ file, updateWorkspaceFile }) {
         event.preventDefault();
         setCommandOpen((open) => !open);
       }
+      if ((event.ctrlKey || event.metaKey) && key === "i") {
+        event.preventDefault();
+        setActivePanel("ai");
+        return;
+      }
       if ((event.ctrlKey || event.metaKey) && key === "s") {
         event.preventDefault();
         setAutosave("Saved");
@@ -989,7 +1128,9 @@ function EditorView({ file, updateWorkspaceFile }) {
 
       const toolShortcuts = {
         a: "arrow",
+        f: "frame",
         l: "line",
+        n: "note",
         o: "diamond",
         r: "rect",
         t: "text",
@@ -1047,18 +1188,13 @@ Export worker -> Object storage: store artifact`;
   }
 
   function addFlowNode(kind = tool) {
-    const isRect = kind === "rect" || kind === "select";
-    const node = {
-      id: `node-${Date.now()}`,
-      label: isRect ? "New step" : "New decision",
-      kind: isRect ? "rect" : "oval",
-      icon: isRect ? "file" : "spark",
-      x: 260 + (flowNodes.length % 5) * 45,
-      y: 360 + (flowNodes.length % 4) * 58,
-      w: isRect ? 170 : 185,
-      h: isRect ? 88 : 98
-    };
+    const baseX = selectedFlowNode ? selectedFlowNode.x + selectedFlowNode.w + 90 : 260 + (flowNodes.length % 5) * 45;
+    const baseY = selectedFlowNode ? selectedFlowNode.y : 360 + (flowNodes.length % 4) * 58;
+    const node = createFlowNodeFromTool(kind === "add" || kind === "select" ? "rect" : kind, { x: baseX, y: baseY });
     setFlowNodes((items) => [...items, node]);
+    if (selectedFlowNode) {
+      setFlowEdges((items) => [...items, { id: `edge-${selectedFlowNode.id}-${node.id}`, from: selectedFlowNode.id, to: node.id, label: "" }]);
+    }
     setSelectedNode(node.id);
     setDiagramDsl((value) => `${value}\n${selectedFlowNode?.label.replace(/\n/g, " ") ?? "Start"} -> ${node.label}: next`);
   }
@@ -1077,19 +1213,23 @@ Export worker -> Object storage: store artifact`;
   function deleteSelectedNode() {
     if (!selectedFlowNode || flowNodes.length <= 1) return;
     setFlowNodes((items) => items.filter((item) => item.id !== selectedFlowNode.id));
+    setFlowEdges((items) => items.filter((item) => item.from !== selectedFlowNode.id && item.to !== selectedFlowNode.id));
     setSelectedNode(flowNodes.find((node) => node.id !== selectedFlowNode.id)?.id ?? "recording");
   }
 
   function applyFlowHistorySnapshot(snapshot) {
+    const nextNodes = Array.isArray(snapshot) ? snapshot : snapshot.nodes ?? [];
+    const nextEdges = Array.isArray(snapshot) ? flowEdges : snapshot.edges ?? createDefaultFlowEdges();
     historyRef.current.applying = true;
-    setFlowNodes(cloneFlowNodes(snapshot));
-    setSelectedNode((current) => snapshot.some((node) => node.id === current) ? current : snapshot[0]?.id ?? null);
+    setFlowNodes(cloneFlowNodes(nextNodes));
+    setFlowEdges(cloneFlowEdges(nextEdges));
+    setSelectedNode((current) => nextNodes.some((node) => node.id === current) ? current : nextNodes[0]?.id ?? null);
   }
 
   function undoFlowNodes() {
     const history = historyRef.current;
     if (!history.past.length) return;
-    const current = JSON.parse(history.last ?? JSON.stringify(flowNodes));
+    const current = JSON.parse(history.last ?? JSON.stringify({ nodes: flowNodes, edges: flowEdges }));
     const previous = history.past[history.past.length - 1];
     history.past = history.past.slice(0, -1);
     history.future = [current, ...history.future].slice(0, 80);
@@ -1099,7 +1239,7 @@ Export worker -> Object storage: store artifact`;
   function redoFlowNodes() {
     const history = historyRef.current;
     if (!history.future.length) return;
-    const current = JSON.parse(history.last ?? JSON.stringify(flowNodes));
+    const current = JSON.parse(history.last ?? JSON.stringify({ nodes: flowNodes, edges: flowEdges }));
     const next = history.future[0];
     history.future = history.future.slice(1);
     history.past = [...history.past, current].slice(-80);
@@ -1125,8 +1265,40 @@ Export worker -> Object storage: store artifact`;
     }));
     if (generatedNodes.length) {
       setFlowNodes(generatedNodes);
+      setFlowEdges(generatedNodes.slice(1).map((node, index) => ({
+        id: `edge-ai-${index}-${Date.now()}`,
+        from: generatedNodes[index].id,
+        to: node.id,
+        label: ""
+      })));
       setSelectedNode(generatedNodes[0].id);
     }
+  }
+
+  function cycleSelectedShape() {
+    if (!selectedFlowNode) return;
+    const order = ["rect", "oval", "diamond", "text", "note"];
+    const nextKind = order[(order.indexOf(selectedFlowNode.kind) + 1) % order.length] ?? "rect";
+    updateFlowNode(selectedFlowNode.id, { kind: nextKind });
+  }
+
+  function cycleSelectedTone() {
+    if (!selectedFlowNode) return;
+    const order = ["rect", "white", "olive", "note"];
+    const nextKind = order[(order.indexOf(selectedFlowNode.kind) + 1) % order.length] ?? "white";
+    updateFlowNode(selectedFlowNode.id, { kind: nextKind });
+  }
+
+  function cycleSelectedSize() {
+    if (!selectedFlowNode) return;
+    const sizes = [
+      { w: 140, h: 70, label: "Small" },
+      { w: 180, h: 96, label: "Medium" },
+      { w: 230, h: 118, label: "Large" }
+    ];
+    const currentIndex = sizes.findIndex((size) => selectedFlowNode.w <= size.w);
+    const next = sizes[(currentIndex + 1) % sizes.length] ?? sizes[1];
+    updateFlowNode(selectedFlowNode.id, { w: next.w, h: next.h });
   }
 
   function resolveEditorComment(commentId) {
@@ -1195,8 +1367,13 @@ Export worker -> Object storage: store artifact`;
         <section className="eraser-canvas-area" aria-label="Canvas">
           <EraserEditorToolRail addFlowNode={addFlowNode} setActivePanel={setActivePanel} setTool={setTool} tool={tool} />
           <EraserFlowCanvas
+            addFlowNode={addFlowNode}
+            deleteSelectedNode={deleteSelectedNode}
+            duplicateSelectedNode={duplicateSelectedNode}
+            flowEdges={flowEdges}
             flowNodes={flowNodes}
             selectedNode={selectedNode}
+            setFlowEdges={setFlowEdges}
             setFlowNodes={setFlowNodes}
             setSelectedNode={setSelectedNode}
             setZoom={setZoom}
@@ -1256,15 +1433,15 @@ Export worker -> Object storage: store artifact`;
           <History size={17} />
           <ChevronDown size={10} />
         </button>
-        <button type="button" title="Style">
+        <button type="button" title="Style" onClick={cycleSelectedTone}>
           <Diamond size={16} />
           <ChevronDown size={10} />
         </button>
-        <button type="button" title="Shape">
+        <button type="button" title="Shape" onClick={cycleSelectedShape}>
           <Square size={16} />
           <ChevronDown size={10} />
         </button>
-        <button type="button" className="eraser-bottom-size" onClick={() => selectedFlowNode ? updateFlowNode(selectedFlowNode.id, { w: Math.max(120, selectedFlowNode.w - 10), h: Math.max(58, selectedFlowNode.h - 6) }) : undefined}>
+        <button type="button" className="eraser-bottom-size" onClick={cycleSelectedSize}>
           Small
           <ChevronDown size={10} />
         </button>
@@ -1297,10 +1474,11 @@ function EraserEditorToolRail({ addFlowNode, setActivePanel, setTool, tool }) {
     [
       { id: "select", label: "Select", shortcut: "V", icon: MousePointer2 },
       { id: "rect", label: "Rectangle", shortcut: "R", icon: Square },
-      { id: "diamond", label: "Circle", shortcut: "O", icon: Diamond },
+      { id: "diamond", label: "Diamond", shortcut: "O", icon: Diamond },
       { id: "arrow", label: "Arrow", shortcut: "A", icon: Send },
       { id: "line", label: "Line", shortcut: "L", icon: PenLine },
       { id: "text", label: "Text", shortcut: "T", icon: FileText },
+      { id: "note", label: "Sticky note", shortcut: "N", icon: StickyNote },
       { id: "magic", label: "Magic", shortcut: "I", icon: Wand2 }
     ],
     [
@@ -1324,7 +1502,7 @@ function EraserEditorToolRail({ addFlowNode, setActivePanel, setTool, tool }) {
                   addFlowNode("rect");
                   return;
                 }
-                if (id === "ai") {
+                if (id === "ai" || id === "magic") {
                   setActivePanel("ai");
                   return;
                 }
@@ -1393,13 +1571,31 @@ function EraserCommentsPanel({ addComment, commentList, newComment, resolveComme
   );
 }
 
-function EraserFlowCanvas({ flowNodes, selectedNode, setFlowNodes, setSelectedNode, setZoom, tool, updateFlowNode, zoom }) {
+function EraserFlowCanvas({
+  deleteSelectedNode,
+  duplicateSelectedNode,
+  flowEdges,
+  flowNodes,
+  selectedNode,
+  setFlowEdges,
+  setFlowNodes,
+  setSelectedNode,
+  setZoom,
+  tool,
+  updateFlowNode,
+  zoom
+}) {
   const viewportRef = useRef(null);
+  const worldRef = useRef(null);
   const didInitialScrollRef = useRef(false);
   const spacePressedRef = useRef(false);
   const [drag, setDrag] = useState(null);
+  const [resize, setResize] = useState(null);
+  const [connection, setConnection] = useState(null);
   const [viewportDrag, setViewportDrag] = useState(null);
   const [editingNode, setEditingNode] = useState(null);
+  const [contextMenu, setContextMenu] = useState(null);
+  const nodeMap = useMemo(() => new Map(flowNodes.map((node) => [node.id, node])), [flowNodes]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -1432,6 +1628,89 @@ function EraserFlowCanvas({ flowNodes, selectedNode, setFlowNodes, setSelectedNo
       window.removeEventListener("pointerup", handlePointerUp);
     };
   }, [drag, setFlowNodes, zoom]);
+
+  useEffect(() => {
+    if (!resize) return undefined;
+
+    function handlePointerMove(event) {
+      const scale = zoom / 100;
+      const dx = (event.clientX - resize.startX) / scale;
+      const dy = (event.clientY - resize.startY) / scale;
+      const minW = 96;
+      const minH = 52;
+
+      setFlowNodes((items) => items.map((item) => {
+        if (item.id !== resize.id) return item;
+        let x = resize.x;
+        let y = resize.y;
+        let w = resize.w;
+        let h = resize.h;
+
+        if (resize.handle.includes("e")) w = Math.max(minW, resize.w + dx);
+        if (resize.handle.includes("s")) h = Math.max(minH, resize.h + dy);
+        if (resize.handle.includes("w")) {
+          w = Math.max(minW, resize.w - dx);
+          x = resize.x + (resize.w - w);
+        }
+        if (resize.handle.includes("n")) {
+          h = Math.max(minH, resize.h - dy);
+          y = resize.y + (resize.h - h);
+        }
+
+        return { ...item, x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) };
+      }));
+    }
+
+    function handlePointerUp() {
+      setResize(null);
+    }
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [resize, setFlowNodes, zoom]);
+
+  useEffect(() => {
+    if (!connection) return undefined;
+
+    function handlePointerMove(event) {
+      setConnection((current) => current ? { ...current, ...toWorldPoint(event) } : null);
+    }
+
+    function handlePointerUp(event) {
+      const target = event.target instanceof Element
+        ? event.target.closest(".eraser-flow-node")
+        : document.elementFromPoint(event.clientX, event.clientY)?.closest(".eraser-flow-node");
+      const targetId = target?.getAttribute("data-node-id");
+      const point = toWorldPoint(event);
+
+      if (targetId && targetId !== connection.from) {
+        createEdge(connection.from, targetId);
+      } else {
+        const source = nodeMap.get(connection.from);
+        const node = createFlowNodeFromTool("rect", { x: point.x + 28, y: point.y - 46 }, { label: "New step" });
+        if (source && point.x < source.x) {
+          node.x = source.x - node.w - 90;
+          node.y = source.y;
+        }
+        setFlowNodes((items) => [...items, node]);
+        setFlowEdges((items) => [...items, { id: `edge-${connection.from}-${node.id}`, from: connection.from, to: node.id, label: "" }]);
+        setSelectedNode(node.id);
+      }
+
+      setConnection(null);
+    }
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [connection, nodeMap, setFlowEdges, setFlowNodes, setSelectedNode]);
 
   useEffect(() => {
     if (!viewportDrag) return undefined;
@@ -1476,6 +1755,17 @@ function EraserFlowCanvas({ flowNodes, selectedNode, setFlowNodes, setSelectedNo
     };
   }, []);
 
+  useEffect(() => {
+    if (!contextMenu) return undefined;
+    const close = () => setContextMenu(null);
+    window.addEventListener("click", close);
+    window.addEventListener("keydown", close);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("keydown", close);
+    };
+  }, [contextMenu]);
+
   function beginViewportPan(event) {
     if (event.button !== 1 && !(event.button === 0 && spacePressedRef.current)) return;
     const viewport = viewportRef.current;
@@ -1495,22 +1785,95 @@ function EraserFlowCanvas({ flowNodes, selectedNode, setFlowNodes, setSelectedNo
     setZoom((value) => Math.min(180, Math.max(40, value + (event.deltaY < 0 ? 10 : -10))));
   }
 
-  function addNodeAt(event) {
-    if (!["rect", "diamond", "round", "text", "note"].includes(tool)) return;
-    const bounds = event.currentTarget.getBoundingClientRect();
+  function toWorldPoint(event) {
+    const world = worldRef.current;
+    const bounds = world?.getBoundingClientRect();
     const scale = zoom / 100;
-    const node = {
-      id: `node-${Date.now()}`,
-      label: tool === "text" ? "Text note" : tool === "diamond" ? "Decision" : "New step",
-      kind: tool === "rect" ? "rect" : "oval",
-      icon: tool === "text" ? "task" : "spark",
-      x: Math.round((event.clientX - bounds.left) / scale),
-      y: Math.round((event.clientY - bounds.top) / scale),
-      w: tool === "text" ? 160 : 180,
-      h: tool === "text" ? 70 : 96
+    return {
+      x: Math.round((event.clientX - (bounds?.left ?? 0)) / scale),
+      y: Math.round((event.clientY - (bounds?.top ?? 0)) / scale)
     };
+  }
+
+  function addNodeAt(event) {
+    if (!["rect", "diamond", "round", "text", "note", "frame"].includes(tool)) return;
+    const node = createFlowNodeFromTool(tool, toWorldPoint(event));
     setFlowNodes((items) => [...items, node]);
     setSelectedNode(node.id);
+    if (tool === "text") setEditingNode(node.id);
+  }
+
+  function handleWorldPointerDown(event) {
+    if (event.button !== 0) return;
+    if (event.target instanceof Element && event.target.closest(".eraser-flow-node, .eraser-node-context")) return;
+    if (["rect", "diamond", "round", "text", "note", "frame"].includes(tool)) {
+      event.preventDefault();
+      addNodeAt(event);
+      return;
+    }
+    if (tool === "select") setSelectedNode(null);
+  }
+
+  function createEdge(from, to) {
+    setFlowEdges((items) => {
+      if (items.some((edge) => edge.from === from && edge.to === to)) return items;
+      return [...items, { id: `edge-${from}-${to}-${Date.now()}`, from, to, label: "" }];
+    });
+    setSelectedNode(to);
+  }
+
+  function addConnectedNode(node) {
+    const next = createFlowNodeFromTool("rect", { x: node.x + node.w + 92, y: node.y }, { label: "New step" });
+    setFlowNodes((items) => [...items, next]);
+    setFlowEdges((items) => [...items, { id: `edge-${node.id}-${next.id}`, from: node.id, to: next.id, label: "" }]);
+    setSelectedNode(next.id);
+  }
+
+  function startConnection(event, node) {
+    event.stopPropagation();
+    const start = { x: node.x + node.w, y: node.y + node.h / 2 };
+    setConnection({ from: node.id, ...start });
+    setSelectedNode(node.id);
+  }
+
+  function edgePath(from, to) {
+    const startX = from.x + from.w;
+    const startY = from.y + from.h / 2;
+    const endX = to.x;
+    const endY = to.y + to.h / 2;
+    const delta = Math.max(48, Math.abs(endX - startX) / 2);
+    return `M${startX} ${startY} C${startX + delta} ${startY}, ${endX - delta} ${endY}, ${endX} ${endY}`;
+  }
+
+  function draftEdgePath() {
+    const from = connection ? nodeMap.get(connection.from) : null;
+    if (!from || !connection) return "";
+    const startX = from.x + from.w;
+    const startY = from.y + from.h / 2;
+    const delta = Math.max(48, Math.abs(connection.x - startX) / 2);
+    return `M${startX} ${startY} C${startX + delta} ${startY}, ${connection.x - delta} ${connection.y}, ${connection.x} ${connection.y}`;
+  }
+
+  function removeNode(nodeId) {
+    if (flowNodes.length <= 1) return;
+    setFlowNodes((items) => items.filter((item) => item.id !== nodeId));
+    setFlowEdges((items) => items.filter((item) => item.from !== nodeId && item.to !== nodeId));
+    setSelectedNode(flowNodes.find((node) => node.id !== nodeId)?.id ?? null);
+  }
+
+  function duplicateNode(node) {
+    const copy = { ...node, id: `node-${Date.now()}`, label: `${node.label.replace(/\n/g, " ")} copy`, x: node.x + 42, y: node.y + 42 };
+    setFlowNodes((items) => [...items, copy]);
+    setSelectedNode(copy.id);
+  }
+
+  function reorderNode(nodeId, direction) {
+    setFlowNodes((items) => {
+      const node = items.find((item) => item.id === nodeId);
+      if (!node) return items;
+      const rest = items.filter((item) => item.id !== nodeId);
+      return direction === "front" ? [...rest, node] : [node, ...rest];
+    });
   }
 
   return (
@@ -1524,11 +1887,9 @@ function EraserFlowCanvas({ flowNodes, selectedNode, setFlowNodes, setSelectedNo
       <div className="eraser-flow-scroll-surface">
         <div
           className="eraser-flow-world"
+          ref={worldRef}
           style={{ transform: `scale(${zoom / 100})` }}
-          onClick={(event) => {
-            if (event.target === event.currentTarget) setSelectedNode(null);
-          }}
-          onDoubleClick={addNodeAt}
+          onPointerDown={handleWorldPointerDown}
         >
         <span className="eraser-diagram-type">Flowchart</span>
         <div className="eraser-outer-lane" />
@@ -1545,27 +1906,37 @@ function EraserFlowCanvas({ flowNodes, selectedNode, setFlowNodes, setSelectedNo
               <path d="M0,0 L8,4 L0,8 Z" fill="#d8d8d8" />
             </marker>
           </defs>
-          <path d="M220 254H335" />
-          <path d="M505 254H575" />
-          <path d="M755 254H820" />
-          <path d="M1010 254H1070" />
-          <path d="M1260 254H1320" />
-          <path d="M1510 254H1570" />
-          <path d="M380 646H1820" />
-          <path d="M380 646C420 646 420 720 380 720L380 860H500" />
-          <path d="M690 886H760" />
-          <path d="M950 886H1030" />
-          <path d="M1220 851H1530" />
+          {flowEdges.map((edge) => {
+            const from = nodeMap.get(edge.from);
+            const to = nodeMap.get(edge.to);
+            if (!from || !to) return null;
+            const midX = (from.x + from.w + to.x) / 2;
+            const midY = (from.y + from.h / 2 + to.y + to.h / 2) / 2;
+            return (
+              <g key={edge.id}>
+                <path d={edgePath(from, to)} />
+                {edge.label ? <text x={midX} y={midY - 8}>{edge.label}</text> : null}
+              </g>
+            );
+          })}
+          {connection ? <path className="is-draft" d={draftEdgePath()} /> : null}
         </svg>
 
         {flowNodes.map((node) => (
           <div
             className={`eraser-flow-node eraser-node-${node.kind} ${selectedNode === node.id ? "is-selected" : ""}`}
+            data-node-id={node.id}
             key={node.id}
             role="button"
             style={{ left: node.x, top: node.y, width: node.w, height: node.h }}
             tabIndex="0"
             onClick={() => setSelectedNode(node.id)}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              setSelectedNode(node.id);
+              setContextMenu({ nodeId: node.id, x: event.clientX, y: event.clientY });
+            }}
             onDoubleClick={(event) => {
               event.stopPropagation();
               setSelectedNode(node.id);
@@ -1586,7 +1957,12 @@ function EraserFlowCanvas({ flowNodes, selectedNode, setFlowNodes, setSelectedNo
             }}
             onPointerDown={(event) => {
               if (event.button !== 0) return;
+              if (event.target instanceof Element && event.target.closest(".eraser-resize-handle, .eraser-node-plus")) return;
               setSelectedNode(node.id);
+              if (tool === "arrow" || tool === "line") {
+                startConnection(event, node);
+                return;
+              }
               setDrag({ id: node.id, startX: event.clientX, startY: event.clientY, nodeX: node.x, nodeY: node.y });
             }}
           >
@@ -1614,8 +1990,47 @@ function EraserFlowCanvas({ flowNodes, selectedNode, setFlowNodes, setSelectedNo
                 {node.label.split("\n").map((line) => <span key={line}>{line}</span>)}
               </span>
             )}
+            {selectedNode === node.id && editingNode !== node.id ? (
+              <>
+                <button
+                  className="eraser-node-plus"
+                  type="button"
+                  title="Add connected node"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    addConnectedNode(node);
+                  }}
+                  onPointerDown={(event) => event.stopPropagation()}
+                >
+                  <Plus size={15} />
+                </button>
+                {["nw", "ne", "sw", "se"].map((handle) => (
+                  <button
+                    aria-label={`Resize ${handle}`}
+                    className={`eraser-resize-handle eraser-resize-${handle}`}
+                    key={handle}
+                    type="button"
+                    onPointerDown={(event) => {
+                      event.stopPropagation();
+                      setResize({ id: node.id, handle, startX: event.clientX, startY: event.clientY, x: node.x, y: node.y, w: node.w, h: node.h });
+                    }}
+                  />
+                ))}
+              </>
+            ) : null}
           </div>
         ))}
+
+        {contextMenu ? (
+          <div className="eraser-node-context" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={(event) => event.stopPropagation()}>
+            <button type="button" onClick={() => { setEditingNode(contextMenu.nodeId); setContextMenu(null); }}>Edit text</button>
+            <button type="button" onClick={() => { const node = nodeMap.get(contextMenu.nodeId); if (node) duplicateNode(node); setContextMenu(null); }}>Duplicate</button>
+            <button type="button" onClick={() => { reorderNode(contextMenu.nodeId, "front"); setContextMenu(null); }}>Bring to front</button>
+            <button type="button" onClick={() => { reorderNode(contextMenu.nodeId, "back"); setContextMenu(null); }}>Send to back</button>
+            <button type="button" onClick={() => { navigator.clipboard?.writeText(nodeMap.get(contextMenu.nodeId)?.label ?? ""); setContextMenu(null); }}>Copy text</button>
+            <button type="button" onClick={() => { removeNode(contextMenu.nodeId); setContextMenu(null); }}>Delete</button>
+          </div>
+        ) : null}
         </div>
       </div>
     </div>
@@ -1624,6 +2039,7 @@ function EraserFlowCanvas({ flowNodes, selectedNode, setFlowNodes, setSelectedNo
 
 function EraserNodeIcon({ type }) {
   const icons = {
+    box: Box,
     check: Check,
     chat: MessageSquare,
     cloud: Cloud,
@@ -1970,11 +2386,69 @@ function IntegrationsView() {
   const [path, setPath] = useState("/src/auth");
   const [syncStatus, setSyncStatus] = useState("Clean");
   const [apiKeyList, setApiKeyList] = useState(apiKeys);
+  const [mcpTools, setMcpTools] = useState(fallbackMcpTools);
+  const [selectedMcpTool, setSelectedMcpTool] = useState(fallbackMcpTools[0].name);
+  const [mcpArgs, setMcpArgs] = useState(prettyJson(mcpExampleArguments[fallbackMcpTools[0].name] ?? {}));
+  const [mcpResult, setMcpResult] = useState("");
+  const [mcpStatus, setMcpStatus] = useState("Idle");
+  const selectedMcpCommand = mcpTools.find((tool) => tool.name === selectedMcpTool) ?? mcpTools[0];
+  const groupedMcpTools = useMemo(() => mcpTools.reduce((groups, tool) => {
+    const category = tool.category ?? "mcp";
+    return { ...groups, [category]: [...(groups[category] ?? []), tool] };
+  }, {}), [mcpTools]);
 
   useEffect(() => {
     setApiKeyList(apiKeys);
     setIntegrationList(integrations);
   }, [apiKeys]);
+
+  useEffect(() => {
+    let mounted = true;
+    fetchMcpTools()
+      .then((tools) => {
+        if (!mounted) return;
+        const normalized = normalizeMcpTools(tools);
+        setMcpTools(normalized);
+        setSelectedMcpTool((current) => normalized.some((tool) => tool.name === current) ? current : normalized[0]?.name ?? current);
+        setMcpStatus("Ready");
+      })
+      .catch((error) => {
+        if (!mounted) return;
+        setMcpTools(fallbackMcpTools);
+        setMcpStatus(error instanceof Error ? "Local fallback" : "Offline");
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  function selectMcpTool(toolName) {
+    setSelectedMcpTool(toolName);
+    setMcpArgs(prettyJson(mcpExampleArguments[toolName] ?? {}));
+    setMcpResult("");
+    setMcpStatus("Ready");
+  }
+
+  async function runSelectedMcpTool() {
+    let parsedArgs;
+    try {
+      parsedArgs = mcpArgs.trim() ? JSON.parse(mcpArgs) : {};
+    } catch {
+      setMcpStatus("Invalid JSON");
+      setMcpResult("Arguments must be valid JSON.");
+      return;
+    }
+
+    setMcpStatus("Running");
+    try {
+      const data = await callMcpTool(selectedMcpTool, parsedArgs);
+      setMcpStatus("Complete");
+      setMcpResult(prettyJson(data));
+    } catch (error) {
+      setMcpStatus("Error");
+      setMcpResult(error instanceof Error ? error.message : "MCP call failed.");
+    }
+  }
 
   return (
     <div className="screen">
@@ -2031,6 +2505,51 @@ function IntegrationsView() {
           <Plus size={15} />
           Create key
         </ActionButton>
+      </section>
+
+      <section className="panel mcp-panel">
+        <PaneHeader title="MCP commands" icon={Command} />
+        <div className="mcp-layout">
+          <div className="mcp-command-list">
+            {Object.entries(groupedMcpTools).map(([category, tools]) => (
+              <div className="mcp-command-group" key={category}>
+                <span>{category}</span>
+                {tools.map((tool) => (
+                  <button
+                    className={tool.name === selectedMcpTool ? "is-active" : ""}
+                    key={tool.name}
+                    type="button"
+                    onClick={() => selectMcpTool(tool.name)}
+                  >
+                    <strong>{tool.title}</strong>
+                    <code>{tool.name}</code>
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+          <div className="mcp-runner">
+            <div className="mcp-runner-title">
+              <div>
+                <strong>{selectedMcpCommand?.title ?? selectedMcpTool}</strong>
+                <p>{selectedMcpCommand?.description}</p>
+              </div>
+              <Badge tone={mcpStatus === "Complete" || mcpStatus === "Ready" ? "good" : mcpStatus === "Error" || mcpStatus === "Invalid JSON" ? "warn" : "neutral"}>{mcpStatus}</Badge>
+            </div>
+            <label>
+              Arguments
+              <textarea value={mcpArgs} onChange={(event) => setMcpArgs(event.target.value)} spellCheck="false" />
+            </label>
+            <div className="header-actions">
+              <ActionButton onClick={() => setMcpArgs(prettyJson(mcpExampleArguments[selectedMcpTool] ?? {}))}>Example</ActionButton>
+              <ActionButton tone="primary" onClick={runSelectedMcpTool} disabled={mcpStatus === "Running"}>
+                {mcpStatus === "Running" ? <Loader2 size={15} className="spin" /> : <Send size={15} />}
+                Run
+              </ActionButton>
+            </div>
+            <pre className="mcp-result">{mcpResult || prettyJson({ tool: selectedMcpTool, result: null })}</pre>
+          </div>
+        </div>
       </section>
     </div>
   );

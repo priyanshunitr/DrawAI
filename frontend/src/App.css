@@ -456,6 +456,112 @@ textarea {
   background: var(--panel-soft);
 }
 
+.mcp-panel {
+  align-content: start;
+}
+
+.mcp-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 340px) minmax(0, 1fr);
+  gap: 14px;
+}
+
+.mcp-command-list,
+.mcp-runner {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+}
+
+.mcp-command-list {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  max-height: 530px;
+  overflow: auto;
+  padding: 10px;
+}
+
+.mcp-command-group {
+  display: grid;
+  gap: 6px;
+}
+
+.mcp-command-group > span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.mcp-command-group button {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  min-height: 52px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--panel);
+  text-align: left;
+}
+
+.mcp-command-group button:hover,
+.mcp-command-group button.is-active {
+  border-color: #316ce6;
+}
+
+.mcp-command-group button.is-active {
+  background: color-mix(in srgb, #316ce6 18%, var(--panel));
+}
+
+.mcp-command-group code {
+  color: var(--muted);
+  font-size: 0.72rem;
+  word-break: break-word;
+}
+
+.mcp-runner {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+}
+
+.mcp-runner-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mcp-runner-title p {
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+
+.mcp-runner textarea {
+  min-height: 176px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  line-height: 1.45;
+}
+
+.mcp-result {
+  min-height: 180px;
+  max-height: 330px;
+  margin: 0;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--panel);
+  font-size: 0.82rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .editor-shell {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
@@ -2036,6 +2142,20 @@ progress::-webkit-progress-value {
   marker-end: url("#eraser-arrow");
 }
 
+.eraser-flow-lines path.is-draft {
+  stroke: #2f70ed;
+  stroke-dasharray: 8 7;
+}
+
+.eraser-flow-lines text {
+  fill: #ffffff;
+  paint-order: stroke;
+  stroke: #151515;
+  stroke-width: 4px;
+  font-size: 13px;
+  font-weight: 900;
+}
+
 .eraser-flow-node {
   position: absolute;
   z-index: 3;
@@ -2052,6 +2172,10 @@ progress::-webkit-progress-value {
   line-height: 1.2;
   text-align: center;
   user-select: none;
+}
+
+.eraser-flow-node:hover {
+  border-color: #8dffa0;
 }
 
 .eraser-flow-node.is-selected {
@@ -2090,6 +2214,44 @@ progress::-webkit-progress-value {
   border-radius: 7px;
 }
 
+.eraser-node-diamond {
+  border-radius: 8px;
+  transform: rotate(45deg);
+}
+
+.eraser-node-diamond > * {
+  transform: rotate(-45deg);
+}
+
+.eraser-node-text {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.eraser-node-note {
+  align-items: flex-start;
+  justify-content: flex-start;
+  padding: 18px;
+  border-color: #f2d366;
+  border-radius: 6px;
+  color: #181818;
+  background: #f2d366;
+  box-shadow: 5px 8px 0 rgba(0, 0, 0, 0.22);
+  text-align: left;
+}
+
+.eraser-node-note .eraser-node-icon {
+  display: none;
+}
+
+.eraser-node-frame {
+  border-color: #66f3f0;
+  border-radius: 10px;
+  background: rgba(35, 66, 66, 0.48);
+  box-shadow: none;
+}
+
 .eraser-node-white {
   border-color: #f0f0f0;
   background: #202020;
@@ -2120,6 +2282,95 @@ progress::-webkit-progress-value {
 
 .eraser-node-olive .eraser-node-icon {
   background: #5b5c2c;
+}
+
+.eraser-node-plus {
+  position: absolute;
+  top: 50%;
+  right: -30px;
+  z-index: 6;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  transform: translateY(-50%);
+  border: 1px solid #5e5e5e;
+  border-radius: 50%;
+  color: #ffffff;
+  background: #242424;
+}
+
+.eraser-node-plus:hover {
+  border-color: #2f70ed;
+  background: #316ce6;
+}
+
+.eraser-resize-handle {
+  position: absolute;
+  z-index: 7;
+  width: 10px;
+  height: 10px;
+  padding: 0;
+  border: 1px solid #ffffff;
+  border-radius: 50%;
+  background: #2f70ed;
+}
+
+.eraser-resize-nw {
+  top: -8px;
+  left: -8px;
+  cursor: nwse-resize;
+}
+
+.eraser-resize-ne {
+  top: -8px;
+  right: -8px;
+  cursor: nesw-resize;
+}
+
+.eraser-resize-sw {
+  bottom: -8px;
+  left: -8px;
+  cursor: nesw-resize;
+}
+
+.eraser-resize-se {
+  right: -8px;
+  bottom: -8px;
+  cursor: nwse-resize;
+}
+
+.eraser-node-context {
+  position: fixed;
+  z-index: 20;
+  display: grid;
+  min-width: 164px;
+  overflow: hidden;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  background: #1b1b1b;
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.42);
+}
+
+.eraser-node-context button {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 0;
+  border-bottom: 1px solid #303030;
+  color: #ffffff;
+  background: transparent;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.eraser-node-context button:last-child {
+  border-bottom: 0;
+}
+
+.eraser-node-context button:hover {
+  background: #2a2a2a;
 }
 
 .eraser-zoom-control {
@@ -2665,6 +2916,7 @@ progress::-webkit-progress-value {
   .editor-grid,
   .auth-layout,
   .two-column,
+  .mcp-layout,
   .public-layout,
   .code-grid,
   .ai-workbench {

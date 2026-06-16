@@ -1641,7 +1641,7 @@ function EraserFlowCanvas({
   const [editingNode, setEditingNode] = useState(null);
   const [selectedEdge, setSelectedEdge] = useState(null);
   const [editingEdge, setEditingEdge] = useState(null);
-  const [edgeHandleDrag, setEdgeHandleDrag] = useState(null);
+  const [edgeSegmentDrag, setEdgeSegmentDrag] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
   const nodeMap = useMemo(() => new Map(flowNodes.map((node) => [node.id, node])), [flowNodes]);
 
@@ -1772,28 +1772,14 @@ function EraserFlowCanvas({
   }, [connection, nodeMap, setFlowEdges, setFlowNodes, setSelectedNode]);
 
   useEffect(() => {
-    if (!edgeHandleDrag) return undefined;
+    if (!edgeSegmentDrag) return undefined;
 
     function handlePointerMove(event) {
-      setEdgeHandleDrag((current) => current ? { ...current, ...toWorldPoint(event) } : null);
+      updateEdgeSegment(edgeSegmentDrag, toWorldPoint(event));
     }
 
-    function handlePointerUp(event) {
-      const target = event.target instanceof Element
-        ? event.target.closest(".eraser-flow-node")
-        : document.elementFromPoint(event.clientX, event.clientY)?.closest(".eraser-flow-node");
-      const targetId = target?.getAttribute("data-node-id");
-
-      if (targetId) {
-        setFlowEdges((items) => items.map((edge) => {
-          if (edge.id !== edgeHandleDrag.edgeId) return edge;
-          if (edgeHandleDrag.endpoint === "from" && targetId !== edge.to) return { ...edge, from: targetId };
-          if (edgeHandleDrag.endpoint === "to" && targetId !== edge.from) return { ...edge, to: targetId };
-          return edge;
-        }));
-      }
-
-      setEdgeHandleDrag(null);
+    function handlePointerUp() {
+      setEdgeSegmentDrag(null);
     }
 
     window.addEventListener("pointermove", handlePointerMove);
@@ -1802,7 +1788,7 @@ function EraserFlowCanvas({
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
     };
-  }, [edgeHandleDrag, setFlowEdges, zoom]);
+  }, [edgeSegmentDrag, setFlowEdges, zoom]);
 
   useEffect(() => {
     if (!viewportDrag) return undefined;
@@ -1948,6 +1934,54 @@ function EraserFlowCanvas({
     setFlowEdges((items) => items.map((item) => item.id === edgeId ? { ...item, ...patch } : item));
   }
 
+  function edgeWaypoints(edge) {
+    return Array.isArray(edge.waypoints)
+      ? edge.waypoints.map((point) => ({ x: Math.round(point.x), y: Math.round(point.y) }))
+      : [];
+  }
+
+  function beginEdgeSegmentDrag(edge, route, segment, point) {
+    const axis = Math.abs(segment.x2 - segment.x1) < Math.abs(segment.y2 - segment.y1) ? "x" : "y";
+    setSelectedEdge(edge.id);
+    setSelectedNode(null);
+    setEditingEdge(null);
+    setEdgeSegmentDrag({
+      axis,
+      edgeId: edge.id,
+      initialPoints: route.points.map((item) => ({ x: item.x, y: item.y })),
+      segmentIndex: segment.index,
+      startPoint: { x: point.x, y: point.y }
+    });
+  }
+
+  function updateEdgeSegment(dragState, point) {
+    const points = dragState.initialPoints.map((item) => ({ ...item }));
+    const lastIndex = points.length - 1;
+    const leftIndex = dragState.segmentIndex;
+    const rightIndex = leftIndex + 1;
+    const delta = dragState.axis === "x"
+      ? point.x - dragState.startPoint.x
+      : point.y - dragState.startPoint.y;
+
+    if (!points[leftIndex] || !points[rightIndex]) return;
+
+    if (dragState.axis === "x") {
+      if (leftIndex > 0) points[leftIndex].x = Math.round(dragState.initialPoints[leftIndex].x + delta);
+      if (rightIndex < lastIndex) points[rightIndex].x = Math.round(dragState.initialPoints[rightIndex].x + delta);
+      if (leftIndex === 1) points[leftIndex].y = points[0].y;
+      if (rightIndex === lastIndex - 1) points[rightIndex].y = points[lastIndex].y;
+    } else {
+      if (leftIndex > 0) points[leftIndex].y = Math.round(dragState.initialPoints[leftIndex].y + delta);
+      if (rightIndex < lastIndex) points[rightIndex].y = Math.round(dragState.initialPoints[rightIndex].y + delta);
+      if (leftIndex === 1) points[leftIndex].x = points[0].x;
+      if (rightIndex === lastIndex - 1) points[rightIndex].x = points[lastIndex].x;
+    }
+
+    setFlowEdges((items) => items.map((edge) => edge.id === dragState.edgeId
+      ? { ...edge, waypoints: normalizeOrthogonalPoints(points).slice(1, -1) }
+      : edge));
+  }
+
   function createEdge(from, to) {
     setFlowEdges((items) => {
       if (items.some((edge) => edge.from === from && edge.to === to)) return items;
@@ -1999,8 +2033,50 @@ function EraserFlowCanvas({
     });
   }
 
-  function roundedPolylinePath(points, radius = 12) {
+  function pointAxis(from, to) {
+    if (!from || !to) return null;
+    if (from.x === to.x && from.y !== to.y) return "vertical";
+    if (from.y === to.y && from.x !== to.x) return "horizontal";
+    return null;
+  }
+
+  function simplifyOrthogonalPoints(points) {
     const compact = compactPoints(points);
+    return compact.filter((point, index) => {
+      const previous = compact[index - 1];
+      const next = compact[index + 1];
+      if (!previous || !next) return true;
+      const sameVertical = previous.x === point.x && point.x === next.x;
+      const sameHorizontal = previous.y === point.y && point.y === next.y;
+      return !sameVertical && !sameHorizontal;
+    });
+  }
+
+  function normalizeOrthogonalPoints(points) {
+    const compact = compactPoints(points);
+    if (compact.length < 2) return compact;
+
+    const nextPoints = [compact[0]];
+
+    for (let index = 1; index < compact.length; index += 1) {
+      const previous = nextPoints[nextPoints.length - 1];
+      const next = compact[index];
+
+      if (previous.x !== next.x && previous.y !== next.y) {
+        const lastAxis = pointAxis(nextPoints[nextPoints.length - 2], previous);
+        nextPoints.push(lastAxis === "horizontal"
+          ? { x: previous.x, y: next.y }
+          : { x: next.x, y: previous.y });
+      }
+
+      nextPoints.push(next);
+    }
+
+    return simplifyOrthogonalPoints(nextPoints);
+  }
+
+  function roundedPolylinePath(points, radius = 12) {
+    const compact = normalizeOrthogonalPoints(points);
     if (compact.length < 2) return "";
 
     const pieces = [`M${compact[0].x} ${compact[0].y}`];
@@ -2029,20 +2105,59 @@ function EraserFlowCanvas({
     return pieces.join(" ");
   }
 
-  function edgeRoute(from, to, dragOverride = null) {
+  function edgeLabelPoint(points) {
+    if (points.length < 2) return points[0] ?? { x: 0, y: 0 };
+    const lengths = points.slice(1).map((point, index) => Math.hypot(point.x - points[index].x, point.y - points[index].y));
+    const total = lengths.reduce((sum, length) => sum + length, 0);
+    let walked = 0;
+
+    for (let index = 0; index < lengths.length; index += 1) {
+      const length = lengths[index];
+      if (walked + length >= total / 2) {
+        const previous = points[index];
+        const next = points[index + 1];
+        const ratio = length === 0 ? 0 : (total / 2 - walked) / length;
+        return {
+          x: Math.round(previous.x + (next.x - previous.x) * ratio),
+          y: Math.round(previous.y + (next.y - previous.y) * ratio)
+        };
+      }
+      walked += length;
+    }
+
+    return points[Math.floor(points.length / 2)];
+  }
+
+  function edgeSegments(points) {
+    return points.slice(0, -1).map((point, index) => {
+      const next = points[index + 1];
+      return {
+        index,
+        x1: point.x,
+        y1: point.y,
+        x2: next.x,
+        y2: next.y,
+        midX: Math.round((point.x + next.x) / 2),
+        midY: Math.round((point.y + next.y) / 2)
+      };
+    }).filter((segment) => segment.x1 !== segment.x2 || segment.y1 !== segment.y2);
+  }
+
+  function edgeRoute(edge, from, to, dragOverride = null) {
     const fromCenter = nodeCenter(from);
     const toCenter = nodeCenter(to);
+    const waypoints = edgeWaypoints(edge);
     const start = dragOverride?.endpoint === "from"
       ? { x: dragOverride.x, y: dragOverride.y, normalX: 0, normalY: 0 }
-      : nodeAnchor(from, dragOverride?.endpoint === "to" ? dragOverride : toCenter);
+      : nodeAnchor(from, waypoints[0] ?? (dragOverride?.endpoint === "to" ? dragOverride : toCenter));
     const end = dragOverride?.endpoint === "to"
       ? { x: dragOverride.x, y: dragOverride.y, normalX: 0, normalY: 0 }
-      : nodeAnchor(to, dragOverride?.endpoint === "from" ? dragOverride : fromCenter);
+      : nodeAnchor(to, waypoints[waypoints.length - 1] ?? (dragOverride?.endpoint === "from" ? dragOverride : fromCenter));
     const lead = 34;
     const startLead = { x: start.x + start.normalX * lead, y: start.y + start.normalY * lead };
     const endLead = { x: end.x + end.normalX * lead, y: end.y + end.normalY * lead };
     const mostlyHorizontal = Math.abs(endLead.x - startLead.x) >= Math.abs(endLead.y - startLead.y);
-    const points = mostlyHorizontal
+    const autoPoints = mostlyHorizontal
       ? [
           start,
           startLead,
@@ -2059,25 +2174,26 @@ function EraserFlowCanvas({
           endLead,
           end
         ];
-    const compact = compactPoints(points);
-    const labelPoint = compact[Math.max(1, Math.floor(compact.length / 2))] ?? {
-      x: Math.round((start.x + end.x) / 2),
-      y: Math.round((start.y + end.y) / 2)
-    };
+    const manualPoints = [start, ...waypoints, end];
+    const points = normalizeOrthogonalPoints(waypoints.length ? manualPoints : autoPoints);
+    const labelPoint = edgeLabelPoint(points);
 
     return {
       start,
       end,
       labelX: labelPoint.x,
       labelY: labelPoint.y,
-      path: roundedPolylinePath(compact)
+      points,
+      segments: edgeSegments(points),
+      waypoints: points.slice(1, -1),
+      path: roundedPolylinePath(points)
     };
   }
 
   function draftEdgePath() {
     const from = connection ? nodeMap.get(connection.from) : null;
     if (!from || !connection) return "";
-    const route = edgeRoute(from, {
+    const route = edgeRoute({ id: "draft", waypoints: [] }, from, {
       x: connection.x - 1,
       y: connection.y - 1,
       w: 2,
@@ -2145,8 +2261,7 @@ function EraserFlowCanvas({
             const from = nodeMap.get(edge.from);
             const to = nodeMap.get(edge.to);
             if (!from || !to) return null;
-            const dragOverride = edgeHandleDrag?.edgeId === edge.id ? edgeHandleDrag : null;
-            const route = edgeRoute(from, to, dragOverride);
+            const route = edgeRoute(edge, from, to);
             const isSelected = selectedEdge === edge.id;
             return (
               <g className={isSelected ? "eraser-flow-edge is-selected" : "eraser-flow-edge"} key={edge.id}>
@@ -2214,28 +2329,28 @@ function EraserFlowCanvas({
                 ) : null}
                 {isSelected && editingEdge !== edge.id ? (
                   <>
-                    <circle
-                      className="eraser-edge-handle"
-                      cx={route.start.x}
-                      cy={route.start.y}
-                      r="5"
-                      onPointerDown={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        setEdgeHandleDrag({ edgeId: edge.id, endpoint: "from", x: route.start.x, y: route.start.y });
-                      }}
-                    />
-                    <circle
-                      className="eraser-edge-handle"
-                      cx={route.end.x}
-                      cy={route.end.y}
-                      r="5"
-                      onPointerDown={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        setEdgeHandleDrag({ edgeId: edge.id, endpoint: "to", x: route.end.x, y: route.end.y });
-                      }}
-                    />
+                    {route.segments
+                      .filter((segment) => segment.index > 0 && segment.index + 1 < route.points.length - 1)
+                      .map((segment) => (
+                      <line
+                        className="eraser-edge-segment-control"
+                        key={`segment-${segment.index}`}
+                        x1={segment.x1}
+                        x2={segment.x2}
+                        y1={segment.y1}
+                        y2={segment.y2}
+                        onDoubleClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setEditingEdge(edge.id);
+                        }}
+                        onPointerDown={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          beginEdgeSegmentDrag(edge, route, segment, toWorldPoint(event));
+                        }}
+                      />
+                    ))}
                   </>
                 ) : null}
               </g>

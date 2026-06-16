@@ -2188,16 +2188,16 @@ progress::-webkit-progress-value {
   text-anchor: middle;
 }
 
-.eraser-edge-handle {
-  fill: #2f90ff;
-  stroke: #151515;
-  stroke-width: 2;
+.eraser-edge-segment-control {
+  stroke: transparent;
+  stroke-linecap: round;
+  stroke-width: 18;
   cursor: grab;
-  pointer-events: auto;
+  pointer-events: stroke;
   vector-effect: non-scaling-stroke;
 }
 
-.eraser-edge-handle:active {
+.eraser-edge-segment-control:active {
   cursor: grabbing;
 }
 
